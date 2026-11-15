@@ -1,0 +1,16 @@
+# Hand-entered list prices (USD per hour, on-demand) with the date they were read.
+# $/1M requests = price_per_hour / (capacity_rps * 3600) * 1e6
+# Fill in before each cloud run; leave `null` until then.
+laptop-cpu:
+  note: "no price; relative numbers only"
+  usd_per_hour: null
+k8s-cpu:
+  provider: null        # gke | eks
+  machine: null         # e.g. n2-standard-8 | m6i.2xlarge
+  usd_per_hour: null
+  as_of: null
+k8s-gpu:
+  provider: null
+  machine: null         # e.g. g2-standard-8 (L4) | g6.2xlarge (L4)
+  usd_per_hour: null
+  as_of: null

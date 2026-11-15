@@ -1,0 +1,20 @@
+# Image raybench-triton-ray: Ray Serve with in-process Triton (libtritonserver.so comes
+# from the NGC image). Build context: repo root.
+FROM nvcr.io/nvidia/tritonserver:26.10-py3
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+COPY bench/ bench/
+# Runtime deps from the lock file into the image's own system Python 3.12.
+RUN uv export --frozen --no-dev --no-group export --no-group analysis --no-hashes \
+        --no-emit-project -o requirements.txt \
+    && uv pip install --system --break-system-packages --no-deps -r requirements.txt \
+    && uv pip install --system --break-system-packages --no-deps . \
+    && uv pip install --system --break-system-packages /opt/tritonserver/python/tritonserver-*.whl
+
+# bench/stacks/triton/repo.py reads config/matrix.yaml; kept after the RUN layer to preserve cache
+COPY config/ config/
+
+ENV PYTHONUNBUFFERED=1
+EXPOSE 8000 8080
+CMD ["python3", "-m", "bench.stacks.ray_triton_inproc.app"]

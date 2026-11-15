@@ -1,0 +1,4 @@
+# NOTE: tag not pinned (cannot verify tags offline); the digest is recorded by bench.versions.
+FROM grafana/k6:latest
+COPY bench/load /load
+# entrypoint stays k6

@@ -1,0 +1,146 @@
+# One profile per stack: docker compose -f deploy/docker/compose.yaml --profile <stack> up -d --wait
+# Host ports: every stack's HTTP API on 8000, except standalone Triton on 8100 (gRPC 8001, metrics 8002).
+# Variables come from deploy/docker/.env (see .env.example); defaults below match it.
+name: raybench
+
+x-env: &env
+  MODEL_ARCH: ${MODEL_ARCH:-deepfm}
+  MODEL_SIZE: ${MODEL_SIZE:-small}
+  ONNX_DIR: ${ONNX_DIR:-/models/onnx}
+  ORT_INTRA_THREADS: ${ORT_INTRA_THREADS:-1}
+  ORT_INTER_THREADS: ${ORT_INTER_THREADS:-1}
+  ORT_PROVIDER: ${ORT_PROVIDER:-CPUExecutionProvider}
+  REPLICAS: ${REPLICAS:-1}
+  BATCHING: ${BATCHING:-0}
+  BATCH_MAX: ${BATCH_MAX:-64}
+  BATCH_WAIT_MS: ${BATCH_WAIT_MS:-5}
+  PORT: ${PORT:-8000}
+  TRITON_URL: ${TRITON_URL:-triton:8001}
+  MODEL_REPO: ${MODEL_REPO:-/models/repo}
+  TOTAL_CPUS: ${TOTAL_CPUS:-6}
+  RUNTIME: ${RUNTIME:-ort}
+  # Ray Serve: 1 = native HAProxy front end instead of the Python proxy actor (ray-haproxy ships it)
+  RAY_SERVE_ENABLE_HA_PROXY: ${RAY_SERVE_ENABLE_HA_PROXY:-0}
+
+x-limits: &limits
+  cpuset: ${SERVING_CPUSET:-0-1}
+  mem_limit: ${MEM_LIMIT:-8g}
+
+x-py-health: &py-health
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8000}/healthz', timeout=2)"]
+  interval: 2s
+  timeout: 3s
+  retries: 5
+  start_period: 120s
+
+x-onnx: &onnx ../../artifacts/onnx:/models/onnx:ro
+
+services:
+  fastapi_ort:
+    image: ${PY_IMAGE:-raybench-py:local}
+    profiles: [fastapi_ort]
+    command: ["python", "-m", "bench.stacks.fastapi_ort.serve"]
+    <<: *limits
+    environment: *env
+    volumes: [*onnx]
+    ports: ["8000:8000"]
+    healthcheck: *py-health
+
+  ray_ort:
+    image: ${PY_IMAGE:-raybench-py:local}
+    profiles: [ray_ort]
+    command: ["python", "-m", "bench.stacks.ray_ort.app"]
+    <<: *limits
+    environment: *env
+    volumes: [*onnx]
+    ports: ["8000:8000", "8080:8080", "8265:8265"]
+    shm_size: 2g
+    healthcheck: *py-health
+
+  # Ray Serve with FastAPI as ingress (@serve.ingress); same ORT/batching as ray_ort.
+  ray_fastapi:
+    image: ${PY_IMAGE:-raybench-py:local}
+    profiles: [ray_fastapi]
+    command: ["python", "-m", "bench.stacks.ray_fastapi.app"]
+    <<: *limits
+    environment: *env
+    volumes: [*onnx]
+    ports: ["8000:8000", "8080:8080", "8265:8265"]
+    shm_size: 2g
+    healthcheck: *py-health
+
+  ray_triton_grpc:
+    image: raybench-py:local
+    profiles: [ray_triton_grpc]
+    command: ["python", "-m", "bench.stacks.ray_triton_grpc.app"]
+    <<: *limits
+    environment: *env
+    volumes: [*onnx]
+    ports: ["8000:8000", "8080:8080", "8265:8265"]
+    shm_size: 2g
+    depends_on:
+      triton:
+        condition: service_healthy
+    healthcheck: *py-health
+
+  ray_triton_inproc:
+    image: raybench-triton-ray:local
+    profiles: [ray_triton_inproc]
+    command: ["python3", "-m", "bench.stacks.ray_triton_inproc.app"]
+    <<: *limits
+    environment: *env
+    volumes:
+      - *onnx
+      - triton_repo:/models/repo:ro
+    ports: ["8000:8000", "8080:8080", "8265:8265"]
+    shm_size: 2g
+    depends_on:
+      triton_repo:
+        condition: service_completed_successfully
+    healthcheck:
+      <<: *py-health
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8000}/healthz', timeout=2)"]
+
+  # Standalone Triton; also the backend of ray_triton_grpc.
+  triton:
+    image: nvcr.io/nvidia/tritonserver:26.10-py3
+    profiles: [triton, ray_triton_grpc]
+    command: ["tritonserver", "--model-repository=${MODEL_REPO:-/models/repo}", "--allow-metrics=true"]
+    <<: *limits
+    environment: *env
+    volumes:
+      - *onnx
+      - triton_repo:/models/repo:ro
+    # host 8100 so it never collides with the Ray ingress on 8000 in the ray_triton_grpc profile
+    ports: ["8100:8000", "8001:8001", "8002:8002"]
+    depends_on:
+      triton_repo:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/v2/health/ready"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 120s
+
+  # Renders config.pbtxt + model symlink into the triton_repo volume, then exits.
+  triton_repo:
+    image: raybench-py:local
+    profiles: [triton, ray_triton_grpc, ray_triton_inproc]
+    environment: *env
+    volumes:
+      - *onnx
+      - triton_repo:/models/repo
+    command:
+      - sh
+      - -c
+      - >-
+        python -m bench.stacks.triton.repo
+        --out "$$MODEL_REPO" --arch "$$MODEL_ARCH" --size "$$MODEL_SIZE"
+        --instances "$$REPLICAS" --batching "$$BATCHING"
+        --intra-threads "$$ORT_INTRA_THREADS" --onnx-dir "$$ONNX_DIR"
+        $$([ "$$ORT_PROVIDER" = CUDAExecutionProvider ] && echo --gpu)
+    restart: "no"
+
+volumes:
+  triton_repo:

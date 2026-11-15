@@ -1,0 +1,3 @@
+# k8s init container: copies ONNX files into a shared volume. Build context: repo root.
+FROM busybox:stable
+COPY artifacts/onnx /models/onnx

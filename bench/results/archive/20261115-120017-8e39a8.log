@@ -1,0 +1,80 @@
+[13:00:17] run 20261115-120017-8e39a8: profile=smoke env=laptop-cpu-haproxy configs=6 todo=6 rows=[200] slos=[20, 50, 100]
+[13:00:18] [1/6] ray_ort deepfm_small batching=False replicas=1
+[13:00:35]   up ray_ort deepfm_small r=1 b=0: ready in 11.4s, idle rss 992.1 MB, total 17s
+[13:01:06]     search   rows=200 rate=10     ok=201    err=0   drop=0    p50=    3.8 p99=    6.1 cpu=2.655 rss=1011.4
+[13:01:36]     search   rows=200 rate=15     ok=301    err=0   drop=0    p50=    3.5 p99=    6.3 cpu=3.268 rss=1014.2
+[13:02:07]     search   rows=200 rate=22     ok=441    err=0   drop=0    p50=    3.7 p99=    5.1 cpu=3.311 rss=1009.7
+[13:02:38]     search   rows=200 rate=33     ok=660    err=0   drop=0    p50=    3.5 p99=    5.7 cpu=3.35 rss=1015.5
+[13:03:08]     search   rows=200 rate=50     ok=1000   err=0   drop=0    p50=    3.6 p99=    5.2 cpu=3.434 rss=1014.8
+[13:03:39]     search   rows=200 rate=75     ok=1500   err=0   drop=0    p50=    3.6 p99=    5.4 cpu=3.547 rss=1017.0
+[13:04:09]     search   rows=200 rate=112    ok=2241   err=0   drop=0    p50=    3.5 p99=    7.1 cpu=3.709 rss=1020.9
+[13:04:40]     search   rows=200 rate=168    ok=3361   err=0   drop=0    p50=    3.6 p99=   14.5 cpu=3.958 rss=1022.8
+[13:05:11]     search   rows=200 rate=252    ok=5040   err=0   drop=0    p50=    3.8 p99=   20.6 cpu=4.309 rss=1021.7
+[13:05:41]     search   rows=200 rate=378    ok=7561   err=0   drop=0    p50=   30.3 p99=   82.0 cpu=4.779 rss=1031.3
+[13:06:13]     search   rows=200 rate=567    ok=7307   err=0   drop=5575 p50= 1529.9 p99= 1810.0 cpu=4.721 rss=1094.7
+[13:06:13]     search done rows=200: @20ms=168, @50ms=252, @100ms=378
+[13:06:13]     confirmed rows=200: @20ms=168, @50ms=252, @100ms=378
+[13:06:16]   down ray_ort
+[13:06:16] [2/6] ray_ort deepfm_small batching=True replicas=1
+[13:06:33]   up ray_ort deepfm_small r=1 b=1: ready in 11.3s, idle rss 992.5 MB, total 17s
+[13:07:04]     search   rows=200 rate=10     ok=201    err=0   drop=0    p50=    9.4 p99=   12.6 cpu=2.633 rss=1010.1
+[13:07:34]     search   rows=200 rate=15     ok=301    err=0   drop=0    p50=    9.2 p99=   13.0 cpu=3.283 rss=1016.5
+[13:08:05]     search   rows=200 rate=22     ok=441    err=0   drop=0    p50=    9.3 p99=   11.5 cpu=3.33 rss=1018.7
+[13:08:36]     search   rows=200 rate=33     ok=661    err=0   drop=0    p50=    9.2 p99=   11.3 cpu=3.381 rss=1019.8
+[13:09:06]     search   rows=200 rate=50     ok=1001   err=0   drop=0    p50=    9.3 p99=   12.6 cpu=3.478 rss=1013.2
+[13:09:37]     search   rows=200 rate=75     ok=1501   err=0   drop=0    p50=    9.4 p99=   14.3 cpu=3.622 rss=1014.3
+[13:10:07]     search   rows=200 rate=112    ok=2241   err=0   drop=0    p50=   10.6 p99=   16.8 cpu=3.829 rss=1021.3
+[13:10:38]     search   rows=200 rate=168    ok=3361   err=0   drop=0    p50=   10.0 p99=   15.1 cpu=3.953 rss=1023.7
+[13:11:09]     search   rows=200 rate=252    ok=5040   err=0   drop=0    p50=   10.6 p99=   21.3 cpu=4.291 rss=1031.8
+[13:11:41]     search   rows=200 rate=378    ok=6271   err=0   drop=1605 p50= 1182.4 p99= 1261.7 cpu=4.298 rss=1075.1
+[13:11:41]     search done rows=200: @20ms=168, @50ms=252, @100ms=252
+[13:11:41]     confirmed rows=200: @20ms=168, @50ms=252, @100ms=252
+[13:11:43]   down ray_ort
+[13:11:43] [3/6] ray_triton_grpc deepfm_small batching=False replicas=1
+[13:12:07]   up ray_triton_grpc deepfm_small r=1 b=0: ready in 11.3s, idle rss 990.9 MB, total 24s
+[13:12:38]     search   rows=200 rate=10     ok=201    err=0   drop=0    p50=    4.8 p99=    7.6 cpu=2.554 rss=1011.4
+[13:13:09]     search   rows=200 rate=15     ok=301    err=0   drop=0    p50=    4.7 p99=    8.0 cpu=3.321 rss=1015.3
+[13:13:39]     search   rows=200 rate=22     ok=441    err=0   drop=0    p50=    4.8 p99=   10.2 cpu=3.376 rss=1017.3
+[13:14:10]     search   rows=200 rate=33     ok=661    err=0   drop=0    p50=    4.7 p99=    9.7 cpu=3.444 rss=1019.2
+[13:14:40]     search   rows=200 rate=50     ok=1001   err=0   drop=0    p50=    4.8 p99=   11.5 cpu=3.557 rss=1020.4
+[13:15:11]     search   rows=200 rate=75     ok=1501   err=0   drop=0    p50=    4.7 p99=   12.4 cpu=3.686 rss=1018.5
+[13:15:42]     search   rows=200 rate=112    ok=2240   err=0   drop=0    p50=    4.6 p99=   10.5 cpu=3.889 rss=1018.3
+[13:16:12]     search   rows=200 rate=168    ok=3360   err=0   drop=0    p50=    4.8 p99=   21.0 cpu=4.208 rss=1020.3
+[13:16:43]     search   rows=200 rate=252    ok=5040   err=0   drop=0    p50=    7.6 p99=   40.6 cpu=4.687 rss=1024.2
+[13:17:15]     search   rows=200 rate=378    ok=6491   err=0   drop=1363 p50= 1135.5 p99= 1213.3 cpu=4.881 rss=1074.8
+[13:17:15]     search done rows=200: @20ms=112, @50ms=252, @100ms=252
+[13:17:15]     confirmed rows=200: @20ms=112, @50ms=252, @100ms=252
+[13:17:21]   down ray_triton_grpc
+[13:17:21] [4/6] ray_triton_grpc deepfm_small batching=True replicas=1
+[13:17:43]   up ray_triton_grpc deepfm_small r=1 b=1: ready in 10.0s, idle rss 990.0 MB, total 22s
+[13:18:14]     search   rows=200 rate=10     ok=201    err=0   drop=0    p50=    4.5 p99=    7.0 cpu=2.52 rss=1016.0
+[13:18:45]     search   rows=200 rate=15     ok=301    err=0   drop=0    p50=    4.6 p99=    7.9 cpu=3.323 rss=1013.8
+[13:19:15]     search   rows=200 rate=22     ok=440    err=0   drop=0    p50=    4.4 p99=    6.6 cpu=3.362 rss=1018.4
+[13:19:46]     search   rows=200 rate=33     ok=660    err=0   drop=0    p50=    4.6 p99=    7.1 cpu=3.42 rss=1019.1
+[13:20:16]     search   rows=200 rate=50     ok=1001   err=0   drop=0    p50=    4.6 p99=   11.7 cpu=3.525 rss=1017.2
+[13:20:47]     search   rows=200 rate=75     ok=1501   err=0   drop=0    p50=    4.4 p99=    7.0 cpu=3.642 rss=1020.4
+[13:21:18]     search   rows=200 rate=112    ok=2241   err=0   drop=0    p50=    4.3 p99=    7.3 cpu=3.831 rss=1021.3
+[13:21:48]     search   rows=200 rate=168    ok=3361   err=0   drop=0    p50=    4.4 p99=   11.2 cpu=4.131 rss=1021.9
+[13:22:19]     search   rows=200 rate=252    ok=5041   err=0   drop=0    p50=    6.6 p99=   34.9 cpu=4.628 rss=1032.9
+[13:22:50]     search   rows=200 rate=378    ok=7073   err=0   drop=589  p50=  831.8 p99= 1151.3 cpu=4.933 rss=1076.4
+[13:22:50]     search done rows=200: @20ms=168, @50ms=252, @100ms=252
+[13:22:50]     confirmed rows=200: @20ms=168, @50ms=252, @100ms=252
+[13:22:56]   down ray_triton_grpc
+[13:22:56] [5/6] ray_triton_inproc deepfm_small batching=False replicas=1
+[13:23:15]   up ray_triton_inproc deepfm_small r=1 b=0: ready in 12.1s, idle rss 1035.5 MB, total 19s
+[13:23:45]     search   rows=200 rate=10     ok=201    err=0   drop=0    p50=    8.5 p99=   19.9 cpu=3.369 rss=1060.5
+[13:24:17]     search   rows=200 rate=15     ok=301    err=0   drop=0    p50=    8.9 p99=   22.4 cpu=3.618 rss=1061.7
+[13:24:48]     search   rows=200 rate=22     ok=440    err=0   drop=0    p50=    9.0 p99=   15.8 cpu=3.712 rss=1061.0
+[13:25:20]     search   rows=200 rate=33     ok=661    err=0   drop=0    p50=    9.4 p99=   22.8 cpu=3.886 rss=1063.8
+[13:25:52]     search   rows=200 rate=50     ok=1001   err=0   drop=0    p50=    9.6 p99=   22.8 cpu=4.103 rss=1064.6
+[13:26:23]     search   rows=200 rate=75     ok=1501   err=0   drop=0    p50=   10.0 p99=   73.5 cpu=4.429 rss=1066.3
+[13:26:55]     search   rows=200 rate=112    ok=2230   err=0   drop=11   p50=   39.3 p99=  345.9 cpu=4.885 rss=1069.1
+[13:26:55]     search done rows=200: @20ms=22, @50ms=50, @100ms=75
+[13:26:55]     confirmed rows=200: @20ms=22, @50ms=50, @100ms=75
+[13:26:59]   down ray_triton_inproc
+[13:26:59] [6/6] ray_triton_inproc deepfm_small batching=True replicas=1
+[13:27:39]   up ray_triton_inproc deepfm_small r=1 b=1: ready in 31.0s, idle rss 1054.7 MB, total 39s
+[13:28:11]     search   rows=200 rate=10     ok=201    err=0   drop=0    p50=    9.4 p99=   18.7 cpu=3.622 rss=1058.5
+[13:28:43]     search   rows=200 rate=15     ok=301    err=0   drop=0    p50=    9.5 p99=   16.1 cpu=3.681 rss=1060.6
+[13:29:14]     search   rows=200 rate=22     ok=441    err=0   drop=0    p50=    9.9 p99=   20.3 cpu=3.761 rss=1058.5
+[13:29:46]     search   rows=200 rate=33     ok=660    err=0   drop=0    p50=    9.9 p99=   20.1 cpu=3.891 rss=1060.7

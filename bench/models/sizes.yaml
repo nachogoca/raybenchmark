@@ -1,0 +1,16 @@
+# Embedding table sizes. Field vocabularies are >= 10_000 in every size so one payload set
+# (ids drawn from [0, 10_000)) is valid for all models.
+embed_dim: 16
+dnn_hidden: [256, 128]
+cross_layers: 3
+sizes:
+  small:
+    # 26 fields x 10k rows x 16 dim = 4.16M params ~ 17 MB
+    vocab_per_field: [10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000,
+                      10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000,
+                      10000, 10000, 10000, 10000, 10000, 10000]
+  large:
+    # ~10M rows x 16 dim = 160M params ~ 640 MB. Criteo-like skew: a few huge fields.
+    vocab_per_field: [1500000, 1500000, 1200000, 1000000, 800000, 800000, 600000, 500000,
+                      400000, 300000, 300000, 200000, 200000, 150000, 100000, 100000,
+                      80000, 60000, 50000, 40000, 30000, 20000, 15000, 12000, 10000, 10000]

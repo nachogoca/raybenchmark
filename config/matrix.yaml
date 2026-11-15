@@ -1,0 +1,96 @@
+# Benchmark matrix. `sweep.py` expands profiles into result-row keys; `deploy/k8s/render.py`
+# reads `pod_sizing` to emit requests==limits. Edit here, nowhere else.
+
+slos_ms: [20, 50, 100]          # p99 thresholds that define capacity
+warmup_s: 30
+measure_s: 60
+reps: 3
+error_budget: 0                 # any non-2xx fails the step
+
+ladder:                         # open-loop arrival rates (req/s); stop when loosest SLO fails
+  start_rps: 10
+  factor: 1.5
+  max_rps: 20000
+  bisect_steps: 2               # refine between last pass and first fail
+search:                         # short steps used only to FIND capacity; confirm steps use
+  warmup_s: 10                  # the top-level warmup_s/measure_s and `reps`
+  measure_s: 20
+overload_factors: [1.5, 3.0]    # multiples of capacity@100ms for the overload steps
+closed_loop_vus_per_replica: 4  # MODE=vus step for the max-throughput number
+
+batching:
+  ray:    {max_batch_size: 64, batch_wait_timeout_s: 0.005}
+  triton: {preferred_batch_size: [8, 32, 64], max_queue_delay_us: 5000, max_batch_size: 1024}
+
+stacks: [fastapi_ort, ray_ort, ray_fastapi, ray_triton_grpc, ray_triton_inproc, triton]
+# Stack properties the sweep needs to know
+stack_props:
+  # reserve_cores: cores left for the framework's own processes (Ray proxy, raylet, controller)
+  # when an env has `tuned: true`; ORT intra-op threads = cores/replicas - reserve_cores.
+  fastapi_ort:       {supports_batching: false, runtimes: [ort, torch]}
+  ray_ort:           {supports_batching: true, reserve_cores: 2, runtimes: [ort, torch]}   # Ray Serve, raw request handler
+  ray_fastapi:       {supports_batching: true, reserve_cores: 2, runtimes: [ort, torch]}   # Ray Serve + FastAPI ingress
+  ray_triton_grpc:   {supports_batching: true, reserve_cores: 2}   # Triton-side dynamic batching
+  ray_triton_inproc: {supports_batching: true, reserve_cores: 2}   # Triton-side dynamic batching
+  triton:            {supports_batching: true}
+
+envs:
+  laptop-cpu: {serving_cpuset: "0-5", loadgen_cpuset: "6-7", total_cpus: 6}
+  # same hardware, ORT threads reduced by stack_props.reserve_cores (results kept separate)
+  laptop-cpu-tuned: {serving_cpuset: "0-5", loadgen_cpuset: "6-7", total_cpus: 6, tuned: true}
+  # tuned + Ray Serve's native HAProxy front end (replaces the Python proxy actor)
+  laptop-cpu-haproxy: {serving_cpuset: "0-5", loadgen_cpuset: "6-7", total_cpus: 6, tuned: true,
+                       extra_env: {RAY_SERVE_ENABLE_HA_PROXY: "1"}}
+  k8s-cpu:    {total_cpus: 4}         # per experiment, split across pods per pod_sizing
+  k8s-gpu:    {total_cpus: 4, gpu: 1}
+
+profiles:
+  smoke:                          # proves the pipeline end to end; ~3 min per stack
+    runtimes: [ort]               # --runtimes ort,torch to add PyTorch (stacks without a torch path skip it)
+    models: [deepfm]
+    sizes: [small]
+    rows: [200]
+    batching: [true]              # fastapi has none -> runs with batching off
+    replicas: [1]
+    reps: 1
+    confirm: false                # capacity from the search steps only
+    bisect_steps: 0
+    closed_loop: false
+    overload: false
+  core:                           # ~1/6 of full: the headline numbers only
+    models: [deepfm]
+    sizes: [small]
+    rows: [1, 200]
+    batching: [false, true]
+    replicas: [1, 4]
+    closed_loop: true
+    overload: true
+  full:
+    models: [deepfm, dcnv2]
+    sizes: [small]
+    rows: [1, 50, 200, 500]
+    batching: [false, true]
+    replicas: [1, 2, 4]
+    closed_loop: true
+    overload: true
+  large:                          # cold start, memory, one throughput point
+    models: [deepfm, dcnv2]
+    sizes: [large]
+    rows: [200]
+    batching: [true]
+    replicas: [1]
+    reps: 1
+    closed_loop: false
+    overload: false
+
+# Kubernetes pod sizing: requests == limits (Guaranteed QoS). cpu is swept; total serving cpu
+# per experiment stays constant (4 vCPU = 1x4, 2x2, or 4x1 pods).
+pod_sizing:
+  cpu_options: [1, 2, 4]
+  memory:                        # small / large model
+    fastapi_ort:       {small: 1Gi,   large: 3Gi}
+    ray_head:          {small: 2Gi,   large: 2Gi,   cpu: 1}
+    ray_worker:        {small: 2Gi,   large: 4Gi}
+    ray_worker_inproc: {small: 4Gi,   large: 6Gi}
+    triton:            {small: 1.5Gi, large: 3.5Gi}
+    k6:                {small: 1Gi,   large: 1Gi,   cpu: 2}

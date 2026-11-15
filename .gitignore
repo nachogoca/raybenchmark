@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+artifacts/
+bench/results/raw/
+bench/load/payloads/*.json
+bench/stacks/triton/model_repo/
+*.onnx
+.pytest_cache/
+.ruff_cache/
+*.deb
+colima-*
+deploy/docker/.env
+bench/results/runs/

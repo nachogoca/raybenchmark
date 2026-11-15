@@ -1,0 +1,33 @@
+# eksctl create cluster -f cluster.yaml   (create.sh wraps this)
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: raybench
+  region: eu-central-1
+managedNodeGroups:
+  - name: serving
+    instanceType: m6i.2xlarge
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 2
+    labels:
+      raybench/role: serving
+  - name: loadgen
+    instanceType: m6i.xlarge
+    desiredCapacity: 1
+    minSize: 1
+    maxSize: 1
+    labels:
+      raybench/role: loadgen
+  - name: gpu
+    instanceType: g6.2xlarge   # 1x NVIDIA L4
+    desiredCapacity: 0         # create.sh scales to 1 with GPU=1
+    minSize: 0
+    maxSize: 1
+    labels:
+      raybench/role: serving
+      raybench/accel: l4
+    taints:
+      - key: nvidia.com/gpu
+        value: present
+        effect: NoSchedule

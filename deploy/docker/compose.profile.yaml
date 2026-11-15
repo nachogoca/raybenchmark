@@ -1,0 +1,19 @@
+# Overlay for profiling sessions: `just profile-up <stack>`.
+#  - runs as the host user so host-side `perf` can attach (perf_event_paranoid=1 allows own processes)
+#  - mounts the live bench/ code (tools in bench/profile run inside the container)
+#  - SYS_PTRACE + the py-spy image so `docker exec ... py-spy dump --pid N` works
+x-prof: &prof
+  image: raybench-py:prof
+  user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+  cap_add: [SYS_PTRACE]
+  volumes: ["../../bench:/app/bench:ro"]
+services:
+  fastapi_ort:
+    <<: *prof
+    environment: {HOME: /tmp}
+  ray_ort:
+    <<: *prof
+    environment: {HOME: /tmp}
+  ray_triton_grpc:
+    <<: *prof
+    environment: {HOME: /tmp}

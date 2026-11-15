@@ -1,0 +1,7 @@
+# Image raybench-py-torch: raybench-py + CPU PyTorch, for the `torch` runtime (stacks that run the
+# model in Python: fastapi_ort, ray_ort, ray_fastapi). Selected per run via PY_IMAGE; the ORT image
+# stays torch-free on purpose. Version matches uv.lock. Build context: repo root.
+FROM raybench-py:local
+COPY --from=ghcr.io/astral-sh/uv:python3.12-bookworm-slim /usr/local/bin/uv /usr/local/bin/uv
+RUN uv pip install --python /app/.venv/bin/python "torch==2.15.0+cpu" \
+    --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
