@@ -44,19 +44,6 @@ environment; a same-environment table is the first item of the plan.
 7. **Spinning off was no gain** (hypothesis tested and dropped). Direct ingress without HAProxy
    changed nothing on a single node.
 
-## Mistakes and bugs found (fixed)
-
-- Docker 29 would not start after the old 18.09 install: a legacy BuildKit cache blocked `dockerd`.
-- Images missing `config/matrix.yaml`: the Triton repo renderer crashed.
-- `ray_triton_grpc` called `run_until_complete` inside Ray's running loop: the replica crashed.
-- The sweep kept waiting after a container exited: it now needs watching for `docker ps -a`.
-- Interrupted sweep runs left `error` rows in the results, and one stale image produced an invalid
-  Triton-in-process number (22/50/75 that did not reproduce, now 252). Invalid runs are archived in
-  `bench/results/archive/`, not deleted.
-- `/tmp` (12 GB RAM-backed) filled up from Ray session folders written by test runs. Fixed: Ray now
-  writes to `~/.rbray`, and the test suite removes its sessions afterwards (`just clean-tmp`).
-- The FastAPI-in-Ray test failed when the app used `from __future__ import annotations`.
-
 ## Not yet tested
 
 Multi-model families, pipelines, bursts, pod failure, DCNv2, large models, Kubernetes, GPU,
