@@ -60,6 +60,31 @@ def _proc_cpu_usec(pid: int) -> tuple[str, int] | None:
     return classify(cmd or stat[stat.index("(") + 1:stat.rindex(")")]), usec
 
 
+_SIZE = re.compile(r"^([\d.]+)\s*([KMGT]?i?B)$")
+_UNIT = {"B": 1, "KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12, "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3, "TiB": 1024**4}
+
+
+def parse_size(text: str) -> float:
+    m = _SIZE.match(text.strip())
+    return float(m.group(1)) * _UNIT[m.group(2)] if m else 0.0
+
+
+def docker_stats_reader(container_ids: list[str]) -> Reader:
+    """Instantaneous CPU and memory from `docker stats` (macOS: cgroups are inside the Docker VM, not visible).
+    No per-component split. Each call takes about a second, which matches the sampler interval."""
+    def read() -> dict:
+        cores = mem = 0.0
+        with contextlib.suppress(Exception):
+            out = subprocess.run(["docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}|{{.MemUsage}}", *container_ids],
+                                 capture_output=True, text=True, timeout=15).stdout
+            for line in out.splitlines():
+                cpu, usage = line.split("|", 1)
+                cores += float(cpu.strip().rstrip("%")) / 100
+                mem += parse_size(usage.split("/")[0])
+        return {"cpu_usec": None, "cpu_cores": cores, "mem_bytes": mem, "rss_bytes": mem, "gpu_util": None, "vram_mb": None}
+    return read
+
+
 def docker_reader(container_ids: list[str]) -> Reader:
     dirs: list[Path] = []
     for cid in container_ids:
@@ -68,6 +93,9 @@ def docker_reader(container_ids: list[str]) -> Reader:
             if (p / "cpu.stat").exists():
                 dirs.append(p)
                 break
+
+    if not dirs:                      # no cgroup access from the host (macOS): use docker stats
+        return docker_stats_reader(container_ids)
 
     def read() -> dict:
         cpu = mem = rss = 0

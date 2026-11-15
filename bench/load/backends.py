@@ -20,7 +20,7 @@ from pathlib import Path
 
 import httpx
 
-from bench.collect.host import parse_cpuset
+from bench.collect.host import loadgen_cores
 from bench.collect.sampler import Sampler, docker_reader, kubectl_top_reader, nvidia_smi_reader
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -252,7 +252,7 @@ class ComposeBackend:
         script = K6_SCRIPT_GRPC if p.grpc else K6_SCRIPT
         csv = (raw_path.with_suffix(".csv.gz") if raw_path else Path("/tmp/raybench_k6.csv.gz"))
         cmd = ["k6", "run", "--quiet", "--no-color", "--out", f"csv={csv}", str(script)]
-        if shutil.which("taskset"):
+        if self.loadgen_cpuset and shutil.which("taskset"):       # Linux only; macOS runs k6 unpinned
             cmd = ["taskset", "-c", self.loadgen_cpuset, *cmd]
         env = {**os.environ, **p.env(), "PAYLOAD_DIR": str(PAYLOADS), "K6_NO_USAGE_REPORT": "true",
                "K6_CSV_TIME_FORMAT": "unix", "PROTO_DIR": str(ROOT / "bench" / "load")}
@@ -270,7 +270,7 @@ class ComposeBackend:
         out = parse_k6_stdout(res.stdout)
         k6_cores = ((r1.ru_utime - r0.ru_utime) + (r1.ru_stime - r0.ru_stime)) / wall
         out["k6_cpu_cores"] = round(k6_cores, 2)
-        out["k6_cpu_frac"] = round(k6_cores / max(1, len(parse_cpuset(self.loadgen_cpuset))), 3)
+        out["k6_cpu_frac"] = round(k6_cores / loadgen_cores(self.loadgen_cpuset), 3)
         try:
             out["dist"] = parse_csv(csv)
         except Exception as e:                       # never lose the step over the extras

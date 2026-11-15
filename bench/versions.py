@@ -55,7 +55,7 @@ def _cpu_model() -> str:
                 return line.split(":", 1)[1].strip()
     except Exception:
         pass
-    return "unknown"
+    return _run(["sysctl", "-n", "machdep.cpu.brand_string"]) or "unknown"       # macOS
 
 
 def _lock_hash() -> str:

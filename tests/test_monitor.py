@@ -44,7 +44,7 @@ class _Proc:
 
 def test_alerts_for_dead_stuck_disk_and_containers(monkeypatch, tmp_path):
     _fake(monkeypatch, tmp_path, LOG, _Proc())
-    assert monitor.assess()[1] == ["1 invalid step(s) so far (see the log)"]
+    assert monitor.assess()[1] == []                    # one invalid step is not an alert
     _fake(monkeypatch, tmp_path, LOG, None)
     assert any("gone" in a for a in monitor.assess()[1])
     _fake(monkeypatch, tmp_path, LOG, _Proc(), age=60 * 30)

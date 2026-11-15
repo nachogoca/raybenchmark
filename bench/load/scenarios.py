@@ -8,6 +8,7 @@ in a profile keeps every config but shrinks steps, repetitions and ladders to a 
 from __future__ import annotations
 
 import contextlib
+import os
 import random
 import statistics
 import sys
@@ -16,6 +17,7 @@ import time
 import httpx
 import orjson
 
+from bench.collect.host import is_arm
 from bench.load.backends import StackCfg
 from bench.models.schema import variant_names
 
@@ -36,7 +38,23 @@ def mk(sw, stack: str, scen: str, variant: str = "", replicas: int = 1, batching
                     scenario=scen, variant=variant, env_extra=dict(env or {}))
 
 
+X86_ONLY = {"triton", "ray_triton_grpc", "ray_triton_inproc"}      # NGC Triton images are x86-64 only
+_skipped_logged: set[str] = set()
+
+
+def unsupported_here(cfg: StackCfg) -> str | None:
+    if is_arm() and cfg.stack in X86_ONLY and not os.environ.get("RAYBENCH_EMULATE"):
+        return f"{cfg.stack}: x86-64-only image on an arm64 host (emulation gives meaningless numbers; RAYBENCH_EMULATE=1 forces it)"
+    return None
+
+
 def _skip(sw, cfg: StackCfg) -> bool:
+    why = unsupported_here(cfg)
+    if why:
+        if cfg.stack not in _skipped_logged:
+            _skipped_logged.add(cfg.stack)
+            sw.log(f"SKIP {why}")
+        return True
     return sw.resume and sw.config_key(cfg) in sw.done_keys
 
 

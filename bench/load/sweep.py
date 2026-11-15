@@ -20,7 +20,7 @@ import orjson
 import yaml
 
 from bench.collect.disk import free_gb
-from bench.collect.host import HostWatch
+from bench.collect.host import HostWatch, auto_cpu_env
 from bench.collect.prom import PromSampler
 from bench.collect.sampler import Sampler
 from bench.load.backends import ComposeBackend, K6Params, K8sBackend, StackCfg
@@ -38,6 +38,8 @@ class Sweep:
         if a.scenarios:
             self.p["scenarios"] = a.scenarios.split(",")
         self.env_cfg = self.m["envs"][self.env]
+        if self.env_cfg.get("auto_cpus"):          # macOS: size the serving CPUs from the Docker VM
+            self.env_cfg = auto_cpu_env(self.env_cfg)
         self.slos = sorted(self.m["slos_ms"])
         self.run_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
         self.dry = a.dry_run
@@ -48,7 +50,7 @@ class Sweep:
         self.out = RESULTS / (f"{self.env}.jsonl" if self.profile_name == "full" else f"{self.env}-{self.profile_name}.jsonl")
         self.done_keys = self._load_done()
         self.log_file = RESULTS / "runs" / f"{self.run_id}.log"
-        if self.env.startswith("laptop"):
+        if not self.env.startswith("k8s"):
             self.backend = ComposeBackend(self.env_cfg, log=self.log)
         else:
             self.backend = K8sBackend(self.env_cfg, gpu=bool(self.env_cfg.get("gpu")),

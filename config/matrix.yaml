@@ -47,6 +47,9 @@ envs:
   # 6 serving cores + 2 for k6; Ray's native HAProxy front end (best laptop result), cores tuned.
   laptop: {serving_cpuset: "0-5", loadgen_cpuset: "6-7", total_cpus: 6, tuned: true,
            extra_env: {RAY_SERVE_ENABLE_HA_PROXY: "1"}}
+  # macOS (Docker Desktop VM): serving CPUs = VM CPUs - 2, k6 unpinned on the host, docker-stats resource reader.
+  # Not comparable with Linux results. Triton stacks are skipped on arm64.
+  mac: {auto_cpus: true, tuned: true, extra_env: {RAY_SERVE_ENABLE_HA_PROXY: "1"}}
   k8s-cpu: {total_cpus: 4}      # per experiment, split across pods per pod_sizing
   k8s-gpu: {total_cpus: 4, gpu: 1}
 

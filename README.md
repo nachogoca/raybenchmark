@@ -65,6 +65,28 @@ run stops itself, and can resume, when free disk drops below 15 GB (`guards` in 
 Container logs are capped at 2 × 20 MB. A step is marked invalid (and excluded from capacity) when
 k6 saturates its CPUs, the serving CPUs throttle, or a container restarts.
 
+## Run on macOS
+
+`just setup` detects the OS and prints the right install commands (`brew install k6`, Docker Desktop or
+colima). The recipes use a separate results environment, `mac`, and everything else is the same:
+
+```bash
+brew install uv just k6                          # plus Docker Desktop (8+ CPUs, 12+ GB) or colima
+just setup && just models payloads preflight
+just smoke      # then: just overnight
+```
+
+What differs from Linux, and why:
+
+- **No CPU pinning.** Containers run in the Docker VM and k6 runs on the host. Serving CPUs are sized
+  automatically (VM CPUs minus 2); k6 is not pinned. Results are **not comparable with Linux runs**.
+- **Resource numbers come from `docker stats`.** cgroups live inside the VM, so there is no per-process CPU
+  split (the "CPU by component" chart is empty).
+- **Triton is skipped on Apple Silicon.** The NGC Triton images are x86-64 only, and emulation would give
+  meaningless numbers. Tests that use Triton run without it. `RAYBENCH_EMULATE=1` forces them anyway.
+- **Linux-only tools.** `perf`, `strace` and `taskset` recipes (`setup-profiling`, `perf-top`, `probe`) say so
+  and exit; `just preflight` skips the CPU-governor and turbo checks.
+
 ## Report
 
 `bench/report/report.html` is a single file (Plotly inlined, works offline):
