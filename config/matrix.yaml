@@ -58,8 +58,8 @@ scenarios:
   S1_batch:                     # stack -> {variant: [batching, wait_ms]}
     rows: [1, 200]
     stacks:
-      ray_ort: {off: [0, 5], wait2: [1, 2], wait5: [1, 5]}
-      triton: {off: [0, 5], dynamic: [1, 5]}
+      ray_ort: {nobatch: [0, 5], wait2: [1, 2], wait5: [1, 5]}
+      triton: {nobatch: [0, 5], dynamic: [1, 5]}
   I1:                           # ingress: python proxy vs HAProxy vs gRPC
     grid_rps: [50, 200]
     variants:

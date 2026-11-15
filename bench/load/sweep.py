@@ -130,14 +130,19 @@ class Sweep:
         restarts0 = self.backend.restart_count() if hasattr(self.backend, "restart_count") else 0
         t_start = time.time()
         t_measure = t_start + warm
+        timer = None
         if hook is not None:
             row["hook_at_unix"] = t_measure + hook_at_s
-            threading.Timer(warm + hook_at_s, hook).start()
+            timer = threading.Timer(warm + hook_at_s, hook)
+            timer.daemon = True
+            timer.start()
         try:
             with Sampler(self.backend.reader(), 1.0) as s, PromSampler(cfg.prom_urls, 1.0) as pr:
                 k6 = self.backend.run_k6(params, raw)
         finally:
             stop.set()
+            if timer is not None:
+                timer.cancel()
         res = {**s.summary(since=t_measure), **self.backend.limits()}
         row.update(k6=k6, res=res, prom=pr.summary(since=t_measure), host=hw.summary(),
                    t_measure_unix=t_measure)

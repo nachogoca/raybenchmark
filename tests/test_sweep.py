@@ -14,7 +14,7 @@ class FakeBackend:
     """p99 grows with rate; capacity ~ 190 req/s at 100 ms, errors above 400."""
 
     def __init__(self):
-        self.ups, self.downs, self.k6_calls = 0, 0, []
+        self.ups, self.downs, self.k6_calls, self.kills, self.params = 0, 0, [], [], []
 
     def up(self, cfg):
         self.ups += 1
@@ -30,9 +30,20 @@ class FakeBackend:
     def limits(self):
         return {"limit_cpu": 6, "limit_mem": "12g"}
 
+    def restart_count(self):
+        return 0
+
+    def kill_matching(self, pattern, n=1, sig=9):
+        self.kills.append(("proc", pattern))
+        return [1]
+
+    def kill_container(self, service, restart_after_s=1.0):
+        self.kills.append(("container", service))
+
     def run_k6(self, p, raw_path=None):
         load = p.rate if p.mode == "rate" else p.vus * 50
         self.k6_calls.append((p.mode, load, p.duration_s))
+        self.params.append(p)
         p99 = 4.0 * math.exp(load / 60)          # 4 ms at 0, 20 ms @97, 50 ms @152, 100 ms @193
         err = 0 if load <= 400 else int(load)
         return {"ok": load * p.duration_s, "err": err, "dropped_iterations": 0, "rows_total": 0,
@@ -101,3 +112,78 @@ def test_parse_k6_stdout():
 def test_stackcfg_family_helpers():
     cfg = StackCfg("triton", "deepfm", "small", False, 1, 1, 6, scenario="F1")
     assert cfg.grpc_port == 8001 and cfg.profile == "triton" and cfg.prom_urls == ["http://localhost:8002/metrics"]
+
+
+class _ImmediateTimer:
+    """threading.Timer stand-in: fires the hook as soon as the step starts."""
+
+    def __init__(self, delay, fn):
+        self.fn, self.daemon, self.cancelled = fn, False, False
+
+    def start(self):
+        self.fn()
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def test_every_scenario_runs_on_fake_backend(tmp_path, monkeypatch):
+    from bench.load import scenarios as sc
+
+    monkeypatch.setattr(sw.threading, "Timer", _ImmediateTimer)
+    monkeypatch.setattr(sc, "_first_cold", lambda url, body, model, headers=None: (120.0, 3.0))
+    monkeypatch.setattr(sc.httpx, "post", lambda *a, **k: type("R", (), {"raise_for_status": lambda self: None})())
+    s = _make(tmp_path, monkeypatch, scenarios=",".join(sc.SCENARIOS))
+    s.run()
+    rows = [orjson.loads(line) for line in (tmp_path / "laptop.jsonl").read_text().splitlines()]
+    assert not [r for r in rows if r["step_kind"] == "error"], [r.get("error") for r in rows if r["step_kind"] == "error"]
+    seen = {(r["scenario"], r["step_kind"]) for r in rows}
+    for expect in [("S1", "grid"), ("S1", "closed"), ("S1_scale", "search"), ("S1_batch", "search"), ("I1", "grid"),
+                   ("F1", "family_fixed"), ("F2", "cold_variant"), ("F3", "fanout"), ("F5", "grid"),
+                   ("A1", "burst"), ("R1", "overload"), ("R2", "failure")]:
+        assert expect in seen, expect
+    # family traffic carries the model list and Zipf skew; gRPC variants flag the grpc script
+    fam = [p for p in s.backend.params if p.models]
+    assert fam and all(p.zipf_s == 1.1 for p in fam)
+    assert any(p.grpc for p in s.backend.params)
+    assert any(p.shape == "step" and p.steps.count(",") == 2 for p in s.backend.params)       # A1 burst
+    assert s.backend.kills, "R2 must kill something"
+    assert all(r["valid"] for r in rows if "k6" in r)
+
+
+def test_r2_hook_kills_the_configured_target(tmp_path, monkeypatch):
+    monkeypatch.setattr(sw.threading, "Timer", _ImmediateTimer)
+    s = _make(tmp_path, monkeypatch, scenarios="R2")
+    s.p["quick"] = False
+    s.m["scenarios"]["R2"].update(reps=1, measure_s=20)
+    s.run()
+    assert ("proc", "ray::ServeReplica") in s.backend.kills
+    assert ("container", "triton") in s.backend.kills
+
+
+def test_invalid_when_loadgen_saturated(tmp_path, monkeypatch):
+    s = _make(tmp_path, monkeypatch)
+    orig = s.backend.run_k6
+    s.backend.run_k6 = lambda p, raw=None: {**orig(p, raw), "k6_cpu_frac": 0.95}
+    row = s.step(mk(s, "ray_ort", "T"), 200, kind="grid", rate=50, long=True)
+    assert row["valid"] is False and "loadgen_cpu" in row["invalid_reasons"][0]
+
+
+def test_dry_run_estimates_without_side_effects(tmp_path, monkeypatch):
+    a = argparse.Namespace(profile="full", env="laptop", scenarios=None, dry_run=True, no_resume=False, tag="local", registry="")
+    monkeypatch.setattr(sw, "RESULTS", tmp_path)
+    s = sw.Sweep(a)
+    s.run()
+    assert 6 < s.est_s / 3600 < 12, s.est_s / 3600          # overnight budget
+    assert not (tmp_path / "laptop.jsonl").exists()
+
+
+def test_matrix_keys_are_strings():
+    """YAML 1.1 turns bare on/off/yes/no keys into booleans, which silently renames variants."""
+    import yaml
+    def walk(d, path=""):
+        for k, v in d.items():
+            assert isinstance(k, str), f"non-string key {k!r} under {path}"
+            if isinstance(v, dict):
+                walk(v, f"{path}/{k}")
+    walk(yaml.safe_load(sw.MATRIX.read_text()))

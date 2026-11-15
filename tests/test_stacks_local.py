@@ -120,3 +120,111 @@ def test_ray_fastapi_matches_ort(serve_env, small_onnx_dir, monkeypatch, batchin
     finally:
         serve.shutdown()
         ray.shutdown()
+
+
+# ---------------------------------------------------------------- model family (multiplex / fan-out / pipeline)
+def _family_ref(onnx_dir, names, dense, sparse, mode, primary):
+    from bench.stacks.common import pipeline as pl
+
+    def run(n, d, s):
+        return predict(make_session(onnx_dir / f"{n}.onnx"), d, s)
+    if mode == "fanout":
+        return pl.average([run(m, dense, sparse) for m in pl.fanout_models(names, primary, 3)])
+    if mode == "pipeline":
+        d, s = pl.featurize(dense, sparse)
+        return pl.postprocess(run(primary, d, s))
+    return run(primary, dense, sparse)
+
+
+@pytest.fixture
+def family_env(serve_env, small_onnx_dir, monkeypatch):
+    if not (small_onnx_dir / "deepfm_small_v03.onnx").exists():
+        pytest.skip("run `just models` first (family variants)")
+    monkeypatch.setenv("VARIANTS", "4")
+    monkeypatch.setenv("FANOUT_K", "3")
+    return small_onnx_dir
+
+
+@pytest.mark.parametrize("mode,lazy", [("mux", "0"), ("mux", "1"), ("fanout", "0"), ("pipeline", "0")])
+def test_fastapi_family_modes_match_reference(family_env, monkeypatch, mode, lazy):
+    from fastapi.testclient import TestClient
+
+    import bench.stacks.fastapi_ort.app as mod
+    monkeypatch.setenv("FAMILY_MODE", mode)
+    monkeypatch.setenv("LAZY_LOAD", lazy)
+    importlib.reload(mod)
+    names = [f"deepfm_small_v0{i}" for i in range(4)]
+    dense, sparse, body = _payload(6)
+    with TestClient(mod.app) as c:
+        assert c.get("/healthz").json()["loaded"] == (0 if lazy == "1" else 4)
+        for primary in ("deepfm_small_v00", "deepfm_small_v03"):         # v03 wraps around in fan-out
+            r = c.post(f"/v2/models/{primary}/infer", content=body)
+            assert r.status_code == 200, r.text
+            np.testing.assert_allclose(decode_response(r.content),
+                                       _family_ref(family_env, names, dense, sparse, mode, primary), atol=1e-5)
+        assert c.post("/v2/models/deepfm_small_v09/infer", content=body).status_code == 404
+        if lazy == "1":
+            assert c.get("/healthz").json()["loaded"] >= 1
+        assert "raybench_handler_seconds_count 2" in c.get("/metrics").text
+
+
+@pytest.mark.slow
+def test_ray_family_modes_match_reference(family_env, monkeypatch):
+    import httpx
+    import ray
+    from ray import serve
+
+    from bench.stacks.common.config import ServeConfig
+    from bench.stacks.ray_family.app import app_builder
+
+    names = [f"deepfm_small_v0{i}" for i in range(4)]
+    dense, sparse, body = _payload(6)
+    monkeypatch.setenv("MUX_MODELS_PER_REPLICA", "2")        # smaller than the family: forces eviction
+    ray.init(num_cpus=2, include_dashboard=False, logging_level="error", ignore_reinit_error=True)
+    try:
+        serve.start(http_options={"host": "127.0.0.1", "port": 18001})
+        for mode in ("mux", "deployments", "fanout", "pipeline"):
+            monkeypatch.setenv("FAMILY_MODE", mode)
+            serve.run(app_builder(ServeConfig.from_env().as_dict()), route_prefix="/")
+            with httpx.Client(base_url="http://127.0.0.1:18001", timeout=60) as c:
+                assert c.get("/healthz").json()["mode"] == mode
+                for primary in names:                          # 4 models through a 2-model LRU
+                    r = c.post(f"/v2/models/{primary}/infer", content=body,
+                               headers={"serve_multiplexed_model_id": primary})
+                    assert r.status_code == 200, (mode, r.text)
+                    np.testing.assert_allclose(decode_response(r.content),
+                                               _family_ref(family_env, names, dense, sparse, mode, primary), atol=1e-5)
+                assert c.post("/v2/models/deepfm_small_v09/infer", content=body).status_code == 404
+    finally:
+        serve.shutdown()
+        ray.shutdown()
+
+
+@pytest.mark.slow
+def test_ray_grpc_ingress_matches_ort(serve_env, small_onnx_dir, monkeypatch):
+    import ray
+    import tritonclient.grpc as tgrpc
+    from ray import serve
+
+    from bench.stacks.common.config import ServeConfig
+    from bench.stacks.common.ray_runner import enable_grpc_pickle_alias
+    from bench.stacks.ray_ort.app import app_builder
+
+    enable_grpc_pickle_alias()          # before ray.init, so every Ray process can pickle the request
+    dense, sparse, _ = _payload(4)
+    ref = predict(make_session(small_onnx_dir / "deepfm_small.onnx"), dense, sparse)
+    ray.init(num_cpus=2, include_dashboard=False, logging_level="error", ignore_reinit_error=True)
+    try:
+        serve.start(http_options={"host": "127.0.0.1", "port": 18002}, grpc_options={
+            "port": 19000, "grpc_servicer_functions": [
+                "tritonclient.grpc.service_pb2_grpc.add_GRPCInferenceServiceServicer_to_server"]})
+        serve.run(app_builder(ServeConfig.from_env().as_dict()), route_prefix="/")
+        client = tgrpc.InferenceServerClient("127.0.0.1:19000")
+        ins = [tgrpc.InferInput("dense", list(dense.shape), "FP32"), tgrpc.InferInput("sparse", list(sparse.shape), "INT64")]
+        ins[0].set_data_from_numpy(dense)
+        ins[1].set_data_from_numpy(sparse)
+        res = client.infer("deepfm_small", ins, headers={"application": "default"})
+        np.testing.assert_allclose(res.as_numpy("prob"), ref, atol=1e-6)
+    finally:
+        serve.shutdown()
+        ray.shutdown()

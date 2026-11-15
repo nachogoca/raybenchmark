@@ -55,7 +55,7 @@ def flatten(rows: list[dict]) -> pd.DataFrame:
             "batching": r.get("batching", False), "valid": r.get("valid", True),
             "invalid": "; ".join(r.get("invalid_reasons") or []),
             "p50": lat.get("p50"), "p90": lat.get("p90"), "p99": lat.get("p99"), "pmax": lat.get("max"),
-            "avg": lat.get("avg"), "p999": pc.get("99.9"), "err": k["err"], "drop": k["dropped_iterations"],
+            "avg": lat.get("avg"), "p999": pc.get("99.9"), "err": k["err"], "dropped": k["dropped_iterations"],
             "ok": k["ok"], "rps": k.get("achieved_rps") or 0.0, "duration_s": r.get("duration_s"),
             "cpu": res.get("cpu_cores_mean"), "cpu_peak": res.get("cpu_cores_peak"),
             "core_s": res.get("cpu_core_seconds"), "rss": res.get("rss_peak_mb"),
@@ -90,7 +90,7 @@ def _points(df: pd.DataFrame) -> dict[int, dict]:
     pts: dict[int, dict] = {}
     for rate, g in df.groupby("rate"):
         pts[int(rate)] = {"p99": [float(x) for x in g["p99"] if x is not None and not math.isnan(x)],
-                          "clean": bool(((g["err"] == 0) & (g["drop"] <= 0.001 * (g["ok"] + g["drop"] + g["err"]).clip(lower=1))).all())}
+                          "clean": bool(((g["err"] == 0) & (g["dropped"] <= 0.001 * (g["ok"] + g["dropped"] + g["err"]).clip(lower=1))).all())}
     return pts
 
 
@@ -134,7 +134,7 @@ def search_capacity(df: pd.DataFrame, scenario: str, slo: float) -> pd.DataFrame
     sel = df[(df.scenario == scenario) & (df.kind == "search")]
     out = []
     for (variant, stack), g in sel.groupby(["variant", "stk"]):
-        ok = g[(g.err == 0) & (g.drop <= 0.001 * (g.ok + g.drop + g.err).clip(lower=1)) & (g.p99 <= slo)]
+        ok = g[(g.err == 0) & (g.dropped <= 0.001 * (g.ok + g.dropped + g.err).clip(lower=1)) & (g.p99 <= slo)]
         out.append({"variant": variant, "stk": stack, "capacity": int(ok.rate.max()) if len(ok) else 0,
                     "replicas": int(g.replicas.iloc[0])})
     return pd.DataFrame(out)

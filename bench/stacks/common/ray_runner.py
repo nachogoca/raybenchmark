@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 import numpy as np
 from starlette.requests import Request
@@ -39,6 +41,14 @@ def split_rows(prob: np.ndarray, sizes: list[int]) -> list[np.ndarray]:
     return out
 
 
+def enable_grpc_pickle_alias() -> None:
+    """Make `grpc_service_pb2` importable in every Ray process (needed to pickle gRPC requests)."""
+    shim = str(Path(__file__).resolve().parents[2] / "protocol" / "pb_shim")
+    os.environ["PYTHONPATH"] = os.pathsep.join(p for p in (shim, os.environ.get("PYTHONPATH", "")) if p)
+    if shim not in sys.path:
+        sys.path.insert(0, shim)
+
+
 def run_local(app_builder: Callable[[dict], object], cfg: ServeConfig) -> None:
     """Start a one-node Ray + Serve and block. Used by `python -m bench.stacks.<stack>.app`."""
     import ray
@@ -53,6 +63,7 @@ def run_local(app_builder: Callable[[dict], object], cfg: ServeConfig) -> None:
     )
     kw = {}
     if cfg.grpc:
+        enable_grpc_pickle_alias()
         kw["grpc_options"] = {
             "port": 9000,
             "grpc_servicer_functions": [

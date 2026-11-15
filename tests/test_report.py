@@ -1,4 +1,9 @@
+import sys
+from pathlib import Path
+
 import orjson
+
+sys.path.insert(0, str(Path(__file__).parent))
 
 from bench.report import analyze as an
 from bench.report import report
@@ -47,7 +52,7 @@ def test_capacity_and_report(tmp_path, monkeypatch):
     assert cap.loc[("fastapi_ort", 50), "lo"] <= 200 <= cap.loc[("fastapi_ort", 50), "hi"]
     out = report.build("laptop", tmp_path / "r.html", tmp_path / "REPORT.md")
     text = out.read_text()
-    assert "Executive summary" in text and "FastAPI + ORT" in text and "plotly" in text.lower()
+    assert "Summary" in text and "FastAPI + ORT" in text and "plotly" in text.lower()
     assert "No data" in text                       # scenarios that did not run are labelled, not hidden
     assert "| FastAPI + ORT | 200 |" in (tmp_path / "REPORT.md").read_text()
 
@@ -56,3 +61,33 @@ def test_recovery_seconds():
     series = [{"t": t, "p99": 500 if t < 5 else 20, "err": 0} for t in range(20)]
     assert an.recovery_s(series, 0, 50, hold=3) == 5.0
     assert an.recovery_s(series, 0, 10, hold=3) is None
+
+
+def test_full_report_from_every_scenario(tmp_path, monkeypatch):
+    """Run every scenario on the fake backend and build the report from its rows: no section may crash."""
+    import test_sweep as ts
+
+    from bench.load import scenarios as sc
+
+    monkeypatch.setattr(ts.sw.threading, "Timer", ts._ImmediateTimer)
+    monkeypatch.setattr(sc, "_first_cold", lambda url, body, model, headers=None: (120.0, 3.0))
+    monkeypatch.setattr(sc.httpx, "post", lambda *a, **k: type("R", (), {"raise_for_status": lambda self: None})())
+    ts._make(tmp_path, monkeypatch, scenarios=",".join(sc.SCENARIOS)).run()
+    monkeypatch.setattr(an, "RESULTS", tmp_path)
+    out = report.build("laptop", tmp_path / "r.html", tmp_path / "REPORT.md")
+    text = out.read_text()
+    for needle in ("Summary", "Latency at each load", "Capacity", "More replicas", "CPU and memory", "Cost",
+                   "Auto-scaling when load jumps 10×", "Too much load: what each stack does", "A process dies",
+                   "Many models in one service", "One request, many models", "Steps in a row", "Ingress", "Appendix"):
+        assert needle in text, needle
+    assert "Traceback" not in text
+    # standalone: no local machine, file or command references, and no cryptic test ids, outside the Plotly code
+    import re
+    visible = re.sub(r"<script.*?</script>", "", text, flags=re.S)
+    visible = re.sub(r"<style.*?</style>", "", visible, flags=re.S)
+    plain = re.sub(r"<[^>]+>", " ", visible)
+    for bad in ("laptop", "docs/", ".md", "config/", "bench/", "just ", "yaml", "S1_scale", "S1_batch"):
+        assert bad not in plain, bad
+    for ident in ("S1", "I1", "F1", "F2", "F3", "F5", "A1", "R1", "R2"):
+        assert not re.search(rf"\b{ident}\b", plain), ident
+    assert "The tests" in plain and "Main speed test" in plain and "A process dies" in plain
