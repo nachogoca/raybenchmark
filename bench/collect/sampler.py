@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import itertools
 import json
+import os
 import re
 import subprocess
 import threading
@@ -31,6 +32,34 @@ def _read_int(path: Path) -> int | None:
     return None
 
 
+_TICKS = os.sysconf("SC_CLK_TCK")
+# first match wins; matched against the process cmdline (Ray sets ray::<Actor> process titles)
+_COMPONENTS = (
+    ("haproxy", "haproxy"), ("ray::ProxyActor", "ray_proxy"), ("ray::ServeReplica", "ray_replica"),
+    ("ray::ServeController", "ray_controller"), ("raylet", "ray_raylet"), ("gcs_server", "ray_gcs"),
+    ("tritonserver", "triton"), ("uvicorn", "uvicorn"), ("ray::", "ray_other"),
+    ("ray/dashboard", "ray_other"), ("ray/_private", "ray_other"), ("python", "python_other"),
+)
+
+
+def classify(cmdline: str) -> str:
+    for needle, comp in _COMPONENTS:
+        if needle in cmdline:
+            return comp
+    return "other"
+
+
+def _proc_cpu_usec(pid: int) -> tuple[str, int] | None:
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+    except OSError:
+        return None
+    f = stat[stat.rindex(")") + 2:].split()      # fields after "(comm)"; utime=idx 11, stime=idx 12
+    usec = (int(f[11]) + int(f[12])) * 1_000_000 // _TICKS
+    return classify(cmd or stat[stat.index("(") + 1:stat.rindex(")")]), usec
+
+
 def docker_reader(container_ids: list[str]) -> Reader:
     dirs: list[Path] = []
     for cid in container_ids:
@@ -42,7 +71,13 @@ def docker_reader(container_ids: list[str]) -> Reader:
 
     def read() -> dict:
         cpu = mem = rss = 0
+        comp: dict[str, int] = {}
         for d in dirs:
+            with contextlib.suppress(OSError):
+                for pid in (d / "cgroup.procs").read_text().split():
+                    r = _proc_cpu_usec(int(pid))
+                    if r:
+                        comp[r[0]] = comp.get(r[0], 0) + r[1]
             with contextlib.suppress(OSError):
                 for line in (d / "cpu.stat").read_text().splitlines():
                     if line.startswith("usage_usec"):
@@ -53,7 +88,7 @@ def docker_reader(container_ids: list[str]) -> Reader:
                     if line.startswith("anon "):
                         rss += int(line.split()[1])
         return {"cpu_usec": cpu, "cpu_cores": None, "mem_bytes": mem, "rss_bytes": rss,
-                "gpu_util": None, "vram_mb": None}
+                "gpu_util": None, "vram_mb": None, "comp_usec": comp}
 
     return read
 
@@ -142,6 +177,12 @@ class Sampler:
                 cores.append((d1["cpu_usec"] - d0["cpu_usec"]) / 1e6 / (t1 - t0))
             elif d1.get("cpu_cores") is not None:
                 cores.append(d1["cpu_cores"])
+        comp_cores: dict[str, float] = {}
+        if len(s) >= 2 and s[0][1].get("comp_usec") is not None:
+            dt = s[-1][0] - s[0][0]
+            a, b = s[0][1]["comp_usec"], s[-1][1]["comp_usec"]
+            comp_cores = {k: round(max(0, b.get(k, 0) - a.get(k, 0)) / 1e6 / dt, 3)
+                          for k in set(a) | set(b)} if dt > 0 else {}
         mem = [d["mem_bytes"] for _, d in s if d.get("mem_bytes")]
         rss = [d["rss_bytes"] for _, d in s if d.get("rss_bytes")]
         gpu = [d["gpu_util"] for _, d in s if d.get("gpu_util") is not None]
@@ -149,6 +190,8 @@ class Sampler:
         mb = 1024**2
         return {
             "samples": len(s),
+            "cpu_by_component": comp_cores,
+            "cpu_core_seconds": round(sum(cores), 2) if cores else None,   # 1 Hz samples ~ seconds
             "cpu_cores_mean": round(sum(cores) / len(cores), 3) if cores else None,
             "cpu_cores_peak": round(max(cores), 3) if cores else None,
             "mem_mean_mb": round(sum(mem) / len(mem) / mb, 1) if mem else None,

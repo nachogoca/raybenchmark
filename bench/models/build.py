@@ -12,6 +12,6 @@ SEED = 1234
 
 
 def build(spec: ModelSpec) -> torch.nn.Module:
-    torch.manual_seed(SEED)
+    torch.manual_seed(SEED if spec.variant is None else SEED + 1 + spec.variant)
     model = DeepFM(spec) if spec.arch == "deepfm" else DCNv2(spec)
     return model.eval()

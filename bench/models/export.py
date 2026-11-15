@@ -82,10 +82,17 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", default=",".join(SIZES))
     ap.add_argument("--archs", default=",".join(MODELS))
+    ap.add_argument("--variants", type=int, default=0,
+                    help="also export N family members <arch>_<size>_v00.. (seeded weights)")
+    ap.add_argument("--only-variants", action="store_true", help="skip the base models")
     a = ap.parse_args()
     for size in a.sizes.split(","):
         for arch in a.archs.split(","):
-            export(load_spec(arch, size))
+            if not a.only_variants:
+                export(load_spec(arch, size))
+            for v in range(a.variants):
+                if not onnx_path(load_spec(arch, size, v)).exists():
+                    export(load_spec(arch, size, v))
 
 
 if __name__ == "__main__":

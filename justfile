@@ -79,8 +79,10 @@ perf-top proc="ray::ProxyActor" secs="10":
     perf report -i /tmp/raybench-perf.data --symfs "/proc/$pid/root" --no-children --sort dso -g none --stdio 2>/dev/null \
       | grep -v '^#' | grep -v '^$' | head -15
 
+# Base DeepFM/DCNv2 models plus the 64-member DeepFM family used by the multiplexing scenarios.
 models:
     uv run python -m bench.models.export
+    uv run python -m bench.models.export --sizes small --archs deepfm --variants 64 --only-variants
 
 payloads:
     uv run python -m bench.protocol.payloads
@@ -92,7 +94,7 @@ build:
     docker build -f deploy/docker/Dockerfile.models     -t raybench-models:{{tag}} .
     docker build -f deploy/docker/Dockerfile.k6         -t raybench-k6:{{tag}} .
 
-# stack: fastapi_ort | ray_ort | ray_triton_grpc | ray_triton_inproc | triton
+# stack: fastapi_ort | ray_ort | ray_fastapi | ray_family | ray_triton_grpc | ray_triton_inproc | triton
 # Uses deploy/docker/.env (copy .env.example). Standalone triton listens on host port 8100.
 up stack:
     {{compose}} --profile {{stack}} up -d --wait
@@ -103,15 +105,26 @@ down stack:
 logs stack:
     {{compose}} --profile {{stack}} logs -f --tail=100
 
-bench profile env="laptop-cpu":
-    uv run python -m bench.load.sweep --profile {{profile}} --env {{env}}
+# Host checks that make results noisy (CPU governor, free RAM, stray containers).
+preflight:
+    uv run python -c "from bench.collect.host import preflight; [print(('ok  ' if ok else 'FIX ') + c + ('' if ok else '   -> ' + h)) for c, ok, h in preflight()]"
 
+# Every scenario shrunk to a pipeline check (~25 min). Writes bench/results/laptop.jsonl.
+smoke:
+    uv run python -m bench.load.sweep --profile smoke
+
+# The full run (~9 h, resume-safe: re-run the same command after an interruption), then the report.
+overnight: preflight
+    uv run python -m bench.load.sweep --profile full
+    uv run python -m bench.report.report
+
+# Time estimate without starting anything.
+estimate:
+    uv run python -m bench.load.sweep --profile full --dry-run
+
+# bench/report/report.html (self-contained, open in a browser) and REPORT.md.
 report:
-    uv run python -m bench.report.analyze && uv run python -m bench.report.charts && uv run python -m bench.report.build && uv run python -m bench.report.html
-
-# Self-contained HTML report with interactive-looking charts: bench/report/report.html (open in a browser).
-report-html:
-    uv run python -m bench.report.html
+    uv run python -m bench.report.report
 
 # Remove leftover Ray session folders (tests clean up after themselves; this catches crashes).
 clean-tmp:

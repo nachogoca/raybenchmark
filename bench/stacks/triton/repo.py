@@ -28,7 +28,7 @@ def triton_batching_defaults() -> dict:
 
 def config_pbtxt(model_name: str, *, instances: int, batching: bool, intra_threads: int,
                  inter_threads: int = 1, gpu: bool = False, preferred=None, delay_us=None,
-                 max_batch=None) -> str:
+                 max_batch=None, queue_size: int = 0) -> str:
     d = triton_batching_defaults()
     preferred = preferred or d["preferred"]
     delay_us = delay_us if delay_us is not None else d["delay_us"]
@@ -38,10 +38,11 @@ def config_pbtxt(model_name: str, *, instances: int, batching: bool, intra_threa
     dyn = ""
     if batching:
         pref = ", ".join(str(p) for p in preferred)
+        qp = (f"\n  default_queue_policy {{ max_queue_size: {queue_size} }}") if queue_size else ""
         dyn = f"""
 dynamic_batching {{
   preferred_batch_size: [ {pref} ]
-  max_queue_delay_microseconds: {delay_us}
+  max_queue_delay_microseconds: {delay_us}{qp}
 }}"""
     return f'''name: "{model_name}"
 backend: "onnxruntime"
@@ -67,8 +68,8 @@ parameters {{ key: "execution_mode" value: {{ string_value: "0" }} }}
 
 def render_repo(out: Path, arch: str, size: str, *, instances: int, batching: bool,
                 intra_threads: int, onnx_dir: Path, gpu: bool = False, link: bool = True,
-                **kw) -> Path:
-    model_name = f"{arch}_{size}"
+                name: str | None = None, **kw) -> Path:
+    model_name = name or f"{arch}_{size}"
     src = Path(onnx_dir) / f"{model_name}.onnx"
     if not src.exists():
         raise FileNotFoundError(src)
@@ -106,10 +107,35 @@ def main() -> None:
     ap.add_argument("--onnx-dir", default="/models/onnx")
     ap.add_argument("--gpu", action="store_true")
     ap.add_argument("--copy", action="store_true", help="copy instead of symlink")
+    ap.add_argument("--family", type=int, default=0, help="also render N variants <arch>_<size>_vNN")
+    ap.add_argument("--ensembles", type=int, default=0, help="1 = pipe_/fan4_/fan8_ ensembles per variant")
+    ap.add_argument("--queue-size", type=int, default=0, help="Triton max_queue_size (needs batching)")
     a = ap.parse_args()
+    if a.family:
+        from bench.models.schema import variant_names
+        from bench.stacks.triton.pybackend import (
+            fanout_ensemble,
+            pipeline_ensemble,
+            write_support_models,
+        )
+        names = variant_names(a.arch, a.size, a.family)
+        for n in names:
+            render_repo(Path(a.out), a.arch, a.size, instances=a.instances, batching=bool(a.batching),
+                        intra_threads=a.intra_threads, inter_threads=a.inter_threads,
+                        onnx_dir=Path(a.onnx_dir), gpu=a.gpu, link=not a.copy, name=n,
+                        queue_size=a.queue_size)
+        if a.ensembles:
+            write_support_models(Path(a.out))
+            for i, n in enumerate(names):
+                for pre, cfg in (("pipe", pipeline_ensemble(f"pipe_{n}", n)),
+                                 ("fan4", fanout_ensemble(f"fan4_{n}", [names[(i + j) % len(names)] for j in range(4)])),
+                                 ("fan8", fanout_ensemble(f"fan8_{n}", [names[(i + j) % len(names)] for j in range(8)]))):
+                    d = Path(a.out) / f"{pre}_{n}"
+                    (d / "1").mkdir(parents=True, exist_ok=True)
+                    (d / "config.pbtxt").write_text(cfg)
     mdir = render_repo(Path(a.out), a.arch, a.size, instances=a.instances, batching=bool(a.batching),
                        intra_threads=a.intra_threads, inter_threads=a.inter_threads,
-                       onnx_dir=Path(a.onnx_dir), gpu=a.gpu, link=not a.copy)
+                       onnx_dir=Path(a.onnx_dir), gpu=a.gpu, link=not a.copy, queue_size=a.queue_size)
     print(f"rendered {mdir}")
     print((mdir / "config.pbtxt").read_text())
 

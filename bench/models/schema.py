@@ -28,17 +28,19 @@ class ModelSpec:
     embed_dim: int
     dnn_hidden: tuple[int, ...]
     cross_layers: int
+    variant: int | None = None      # family member: same architecture, different seeded weights
 
     @property
     def name(self) -> str:
-        return f"{self.arch}_{self.size}"
+        base = f"{self.arch}_{self.size}"
+        return base if self.variant is None else f"{base}_v{self.variant:02d}"
 
     @property
     def total_rows(self) -> int:
         return sum(self.vocab_per_field)
 
 
-def load_spec(arch: str, size: str) -> ModelSpec:
+def load_spec(arch: str, size: str, variant: int | None = None) -> ModelSpec:
     if arch not in MODELS or size not in SIZES:
         raise ValueError(f"unknown model {arch}/{size}")
     cfg = yaml.safe_load(_SIZES_FILE.read_text())
@@ -51,6 +53,7 @@ def load_spec(arch: str, size: str) -> ModelSpec:
         embed_dim=int(cfg["embed_dim"]),
         dnn_hidden=tuple(int(h) for h in cfg["dnn_hidden"]),
         cross_layers=int(cfg["cross_layers"]),
+        variant=variant,
     )
 
 
@@ -61,3 +64,8 @@ def artifacts_dir(root: Path | None = None) -> Path:
 
 def onnx_path(spec: ModelSpec, root: Path | None = None) -> Path:
     return artifacts_dir(root) / f"{spec.name}.onnx"
+
+
+def variant_names(arch: str, size: str, n: int) -> list[str]:
+    """Names of an n-member family, hottest first: deepfm_small_v00 ... v{n-1}."""
+    return [load_spec(arch, size, i).name for i in range(n)]

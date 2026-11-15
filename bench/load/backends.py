@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import resource
 import shutil
 import subprocess
 import sys
@@ -19,11 +20,13 @@ from pathlib import Path
 
 import httpx
 
+from bench.collect.host import parse_cpuset
 from bench.collect.sampler import Sampler, docker_reader, kubectl_top_reader, nvidia_smi_reader
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "deploy" / "docker" / "compose.yaml"
 K6_SCRIPT = ROOT / "bench" / "load" / "infer.js"
+K6_SCRIPT_GRPC = ROOT / "bench" / "load" / "infer_grpc.js"
 PAYLOADS = ROOT / "bench" / "load" / "payloads"
 K6_MARK = "K6_SUMMARY_JSON:"
 
@@ -41,6 +44,10 @@ class StackCfg:
     provider: str = "CPUExecutionProvider"
     mem_limit: str = "12g"
     runtime: str = "ort"                # inference runtime: ort | torch
+    scenario: str = ""                  # scenario id (S1, F1, ...); "" = classic sweep
+    variant: str = ""                   # scenario-specific tag, e.g. "mux4" or "autoscale_t2"
+    env_extra: dict = field(default_factory=dict)   # extra container env (ServeConfig keys, flags)
+    services: tuple = ()                # compose profile to start (default: the stack name)
 
     @property
     def model(self) -> str:
@@ -48,7 +55,27 @@ class StackCfg:
 
     @property
     def ready_path(self) -> str:
-        return "/v2/health/ready" if self.stack == "triton" else "/healthz"
+        return "/v2/health/ready" if self.stack in ("triton", "triton_http") else "/healthz"
+
+    @property
+    def grpc_port(self) -> int:
+        return 8001 if self.stack == "triton" else 9000
+
+    @property
+    def profile(self) -> str:
+        return self.services[0] if self.services else self.stack
+
+    @property
+    def prom_urls(self) -> list[str]:
+        """Prometheus endpoints on the laptop (published compose ports)."""
+        urls = []
+        if self.stack.startswith("ray"):
+            urls.append("http://localhost:8080/metrics")
+        if self.stack in ("triton", "ray_triton_grpc"):
+            urls.append("http://localhost:8002/metrics")
+        if self.stack == "fastapi_ort":
+            urls.append("http://localhost:8000/metrics")
+        return urls
 
     @property
     def host_port(self) -> int:
@@ -66,13 +93,23 @@ class K6Params:
     duration_s: int = 60
     warmup_s: int = 30
     target: str = "http://localhost:8000"
+    models: str = ""             # comma list for family traffic (hottest first)
+    zipf_s: float = 0.0
+    shape: str = "constant"      # constant | step
+    steps: str = ""              # "rate:seconds,rate:seconds" for shape=step
+    grpc: bool = False           # use bench/load/infer_grpc.js
 
     def env(self) -> dict[str, str]:
-        return {
+        e = {
             "TARGET": self.target, "MODEL": self.model, "ROWS": str(self.rows), "MODE": self.mode,
             "RATE": str(self.rate), "VUS": str(self.vus), "DURATION": f"{self.duration_s}s",
-            "WARMUP": f"{self.warmup_s}s",
+            "WARMUP": f"{self.warmup_s}s", "SHAPE": self.shape,
         }
+        if self.models:
+            e["MODELS"], e["ZIPF_S"] = self.models, str(self.zipf_s)
+        if self.steps:
+            e["STEPS"] = self.steps
+        return e
 
 
 @dataclass
@@ -117,7 +154,7 @@ class ComposeBackend:
         self.log = log
 
     def _compose(self, *args: str) -> list[str]:
-        return ["docker", "compose", "-f", str(COMPOSE), "--profile", self.cfg.stack, *args]
+        return ["docker", "compose", "-f", str(COMPOSE), "--profile", self.cfg.profile, *args]
 
     def up(self, cfg: StackCfg) -> UpInfo:
         self.cfg = cfg
@@ -130,7 +167,7 @@ class ComposeBackend:
             "RUNTIME": cfg.runtime,
             # the torch runtime needs torch inside the image (raybench-py has none, on purpose)
             "PY_IMAGE": "raybench-py-torch:local" if cfg.runtime == "torch" else "raybench-py:local",
-            **self.extra_env,
+            **self.extra_env, **{k: str(v) for k, v in cfg.env_extra.items()},
         }
         (COMPOSE.parent / ".env").write_text("".join(f"{k}={v}\n" for k, v in env.items()))
         self.down(quiet=True)
@@ -138,13 +175,14 @@ class ComposeBackend:
         _sh(self._compose("up", "-d"))
         ready = wait_ready(f"http://localhost:{cfg.host_port}{cfg.ready_path}", timeout_s=900)
         self.containers = _sh(self._compose("ps", "-q")).stdout.split()
+        self.restarts0 = self.restart_count()
         # idle memory once ready
         with Sampler(self.reader(), 0.5) as s:
             time.sleep(5)
         idle = s.summary()
         img = None
         try:
-            svc = cfg.stack
+            svc = cfg.profile
             image = _sh(self._compose("config", "--format", "json")).stdout
             name = json.loads(image)["services"][svc]["image"]
             img = int(_sh(["docker", "image", "inspect", "--format", "{{.Size}}", name]).stdout) / 1e6
@@ -169,20 +207,75 @@ class ComposeBackend:
     def limits(self) -> dict:
         return {"limit_cpu": self.cfg.total_cpus, "limit_mem": self.cfg.mem_limit}
 
+    # ---------- hooks used by scenarios ----------
+    def restart_count(self) -> int:
+        n = 0
+        for c in self.containers:
+            r = subprocess.run(["docker", "inspect", "-f", "{{.RestartCount}}", c],
+                               capture_output=True, text=True)
+            n += int(r.stdout.strip() or 0) if r.returncode == 0 else 0
+        return n
+
+    def exec_python(self, code: str, container: str | None = None) -> str:
+        """Run python in a serving container (every image has python); returns stdout."""
+        c = container or self.containers[0]
+        py = "python3" if self.cfg.stack == "ray_triton_inproc" else "python"
+        return subprocess.run(["docker", "exec", c, py, "-c", code], capture_output=True,
+                              text=True).stdout
+
+    def kill_matching(self, pattern: str, n: int = 1, sig: int = 9) -> list[int]:
+        """kill -sig the first n processes whose cmdline contains `pattern` (inside the container)."""
+        code = (
+            "import os,sys\n"
+            f"pat={pattern!r};n={n};hit=[]\n"
+            "for p in sorted(int(x) for x in os.listdir('/proc') if x.isdigit()):\n"
+            "    try: c=open(f'/proc/{p}/cmdline','rb').read().replace(b'\\0',b' ').decode()\n"
+            "    except OSError: continue\n"
+            "    if pat in c and p!=os.getpid() and len(hit)<n:\n"
+            f"        os.kill(p,{sig}); hit.append(p)\n"
+            "print(' '.join(map(str,hit)))"
+        )
+        return [int(x) for x in self.exec_python(code).split()]
+
+    def kill_container(self, service: str, restart_after_s: float = 1.0) -> None:
+        """docker kill + start: stands in for the orchestrator restarting a dead pod."""
+        cid = _sh(["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.service={service}",
+                   "--filter", "label=com.docker.compose.project=raybench"]).stdout.split()[0]
+        subprocess.run(["docker", "kill", cid], capture_output=True)
+        time.sleep(restart_after_s)
+        subprocess.run(["docker", "start", cid], capture_output=True)
+
     def run_k6(self, p: K6Params, raw_path: Path | None = None) -> dict:
+        from bench.collect.k6parse import parse_csv
+
         p.target = f"http://localhost:{self.cfg.host_port}"
-        cmd = ["k6", "run", "--quiet", "--no-color", str(K6_SCRIPT)]
+        script = K6_SCRIPT_GRPC if p.grpc else K6_SCRIPT
+        csv = (raw_path.with_suffix(".csv.gz") if raw_path else Path("/tmp/raybench_k6.csv.gz"))
+        cmd = ["k6", "run", "--quiet", "--no-color", "--out", f"csv={csv}", str(script)]
         if shutil.which("taskset"):
             cmd = ["taskset", "-c", self.loadgen_cpuset, *cmd]
-        env = {**os.environ, **p.env(), "PAYLOAD_DIR": str(PAYLOADS), "K6_NO_USAGE_REPORT": "true"}
+        env = {**os.environ, **p.env(), "PAYLOAD_DIR": str(PAYLOADS), "K6_NO_USAGE_REPORT": "true",
+               "K6_CSV_TIME_FORMAT": "unix", "PROTO_DIR": str(ROOT / "bench" / "load")}
+        if p.grpc:
+            env["TARGET"] = f"localhost:{self.cfg.grpc_port}"
+        r0, t0 = resource.getrusage(resource.RUSAGE_CHILDREN), time.time()
         res = subprocess.run(cmd, env=env, text=True, capture_output=True,
-                             timeout=p.duration_s + p.warmup_s + 120)
+                             timeout=p.duration_s + p.warmup_s + 180)
+        r1, wall = resource.getrusage(resource.RUSAGE_CHILDREN), time.time() - t0
         if raw_path:
             raw_path.write_text(res.stdout + "\n--- stderr ---\n" + res.stderr)
         if res.returncode not in (0, 99):   # 99 = thresholds failed, we set none
             print(res.stderr[-2000:], file=sys.stderr)
             raise RuntimeError(f"k6 exited {res.returncode}")
-        return parse_k6_stdout(res.stdout)
+        out = parse_k6_stdout(res.stdout)
+        k6_cores = ((r1.ru_utime - r0.ru_utime) + (r1.ru_stime - r0.ru_stime)) / wall
+        out["k6_cpu_cores"] = round(k6_cores, 2)
+        out["k6_cpu_frac"] = round(k6_cores / max(1, len(parse_cpuset(self.loadgen_cpuset))), 3)
+        try:
+            out["dist"] = parse_csv(csv)
+        except Exception as e:                       # never lose the step over the extras
+            out["dist_error"] = f"{type(e).__name__}: {e}"
+        return out
 
 
 class K8sBackend:

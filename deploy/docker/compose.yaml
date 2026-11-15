@@ -21,6 +21,24 @@ x-env: &env
   RUNTIME: ${RUNTIME:-ort}
   # Ray Serve: 1 = native HAProxy front end instead of the Python proxy actor (ray-haproxy ships it)
   RAY_SERVE_ENABLE_HA_PROXY: ${RAY_SERVE_ENABLE_HA_PROXY:-0}
+  # scenario knobs (bench.stacks.common.config.ServeConfig reads the same names)
+  FAMILY_MODE: ${FAMILY_MODE:-}
+  VARIANTS: ${VARIANTS:-16}
+  MUX_MODELS_PER_REPLICA: ${MUX_MODELS_PER_REPLICA:-4}
+  FANOUT_K: ${FANOUT_K:-4}
+  LAZY_LOAD: ${LAZY_LOAD:-0}
+  AUTOSCALE_MAX: ${AUTOSCALE_MAX:-0}
+  AUTOSCALE_MIN: ${AUTOSCALE_MIN:-1}
+  AUTOSCALE_TARGET: ${AUTOSCALE_TARGET:-2}
+  AUTOSCALE_UPSCALE_DELAY_S: ${AUTOSCALE_UPSCALE_DELAY_S:-0}
+  AUTOSCALE_DOWNSCALE_DELAY_S: ${AUTOSCALE_DOWNSCALE_DELAY_S:-30}
+  MAX_QUEUED: ${MAX_QUEUED:--1}
+  MAX_ONGOING: ${MAX_ONGOING:-8}
+  UVICORN_LIMIT_CONCURRENCY: ${UVICORN_LIMIT_CONCURRENCY:-0}
+  GRPC: ${GRPC:-0}
+  ENSEMBLES: ${ENSEMBLES:-0}
+  QUEUE_SIZE: ${QUEUE_SIZE:-0}
+  TRITON_ARGS: ${TRITON_ARGS:-}
 
 x-limits: &limits
   cpuset: ${SERVING_CPUSET:-0-1}
@@ -53,7 +71,7 @@ services:
     <<: *limits
     environment: *env
     volumes: [*onnx]
-    ports: ["8000:8000", "8080:8080", "8265:8265"]
+    ports: ["8000:8000", "8080:8080", "8265:8265", "9000:9000"]
     shm_size: 2g
     healthcheck: *py-health
 
@@ -62,6 +80,19 @@ services:
     image: ${PY_IMAGE:-raybench-py:local}
     profiles: [ray_fastapi]
     command: ["python", "-m", "bench.stacks.ray_fastapi.app"]
+    <<: *limits
+    environment: *env
+    volumes: [*onnx]
+    ports: ["8000:8000", "8080:8080", "8265:8265"]
+    shm_size: 2g
+    healthcheck: *py-health
+
+  # Ray Serve model family: multiplexing / per-variant deployments / fan-out / pipeline.
+  # FAMILY_MODE picks which (see bench/stacks/ray_family/app.py).
+  ray_family:
+    image: ${PY_IMAGE:-raybench-py:local}
+    profiles: [ray_family]
+    command: ["python", "-m", "bench.stacks.ray_family.app"]
     <<: *limits
     environment: *env
     volumes: [*onnx]
@@ -105,7 +136,7 @@ services:
   triton:
     image: nvcr.io/nvidia/tritonserver:26.10-py3
     profiles: [triton, ray_triton_grpc]
-    command: ["tritonserver", "--model-repository=${MODEL_REPO:-/models/repo}", "--allow-metrics=true"]
+    command: ["sh", "-c", "exec tritonserver --model-repository=$$MODEL_REPO --allow-metrics=true $$TRITON_ARGS"]
     <<: *limits
     environment: *env
     volumes:
@@ -139,6 +170,8 @@ services:
         --out "$$MODEL_REPO" --arch "$$MODEL_ARCH" --size "$$MODEL_SIZE"
         --instances "$$REPLICAS" --batching "$$BATCHING"
         --intra-threads "$$ORT_INTRA_THREADS" --onnx-dir "$$ONNX_DIR"
+        --family "$$([ -n "$$FAMILY_MODE" ] && echo "$$VARIANTS" || echo 0)"
+        --ensembles "$$ENSEMBLES" --queue-size "$$QUEUE_SIZE"
         $$([ "$$ORT_PROVIDER" = CUDAExecutionProvider ] && echo --gpu)
     restart: "no"
 

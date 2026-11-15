@@ -35,6 +35,21 @@ class ServeConfig:
     fastapi_threads: int = 8      # anyio threadpool cap per uvicorn worker
     max_ongoing: int = 8          # Ray Serve max_ongoing_requests per replica
     num_cpus: float = 0.0         # explicit Ray num_cpus per replica (0 = total_cpus / replicas)
+    # --- family / composition (bench.stacks.ray_family, fastapi family mode, triton ensembles)
+    family_mode: str = ""         # "" | mux | deployments | fanout | pipeline
+    variants: int = 16            # family size (deepfm_small_v00 .. v{N-1})
+    mux_models_per_replica: int = 4
+    fanout_k: int = 4
+    lazy_load: bool = False       # FastAPI family: load sessions on first request
+    # --- Ray autoscaling / backpressure (0 = off)
+    autoscale_max: int = 0        # >0 enables autoscaling between autoscale_min and autoscale_max
+    autoscale_min: int = 1
+    autoscale_target: float = 2.0  # target_ongoing_requests
+    autoscale_upscale_delay_s: float = 0.0
+    autoscale_downscale_delay_s: float = 30.0
+    max_queued: int = -1          # Ray max_queued_requests (-1 = unlimited)
+    uvicorn_limit_concurrency: int = 0   # FastAPI/uvicorn --limit-concurrency (0 = off)
+    grpc: bool = False            # also expose the Ray gRPC ingress on :9000
 
     def __post_init__(self) -> None:
         if self.arch not in MODELS or self.size not in SIZES:
@@ -57,6 +72,11 @@ class ServeConfig:
         return max(self.total_cpus / self.replicas, 0.1)
 
     @property
+    def family(self) -> list[str]:
+        from bench.models.schema import variant_names
+        return variant_names(self.arch, self.size, self.variants)
+
+    @property
     def infer_path(self) -> str:
         return f"/v2/models/{self.model_name}/infer"
 
@@ -74,7 +94,13 @@ class ServeConfig:
             "inter_threads": "ORT_INTER_THREADS", "provider": "ORT_PROVIDER", "port": "PORT",
             "total_cpus": "TOTAL_CPUS", "triton_url": "TRITON_URL", "model_repo": "MODEL_REPO",
             "fastapi_threads": "FASTAPI_THREADS", "max_ongoing": "MAX_ONGOING",
-            "num_cpus": "NUM_CPUS", "runtime": "RUNTIME",
+            "num_cpus": "NUM_CPUS", "runtime": "RUNTIME", "family_mode": "FAMILY_MODE",
+            "variants": "VARIANTS", "mux_models_per_replica": "MUX_MODELS_PER_REPLICA",
+            "fanout_k": "FANOUT_K", "lazy_load": "LAZY_LOAD", "autoscale_max": "AUTOSCALE_MAX",
+            "autoscale_min": "AUTOSCALE_MIN", "autoscale_target": "AUTOSCALE_TARGET",
+            "autoscale_upscale_delay_s": "AUTOSCALE_UPSCALE_DELAY_S",
+            "autoscale_downscale_delay_s": "AUTOSCALE_DOWNSCALE_DELAY_S", "max_queued": "MAX_QUEUED",
+            "uvicorn_limit_concurrency": "UVICORN_LIMIT_CONCURRENCY", "grpc": "GRPC",
         }
         for k, env in mapping.items():
             if env in e:

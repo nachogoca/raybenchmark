@@ -40,6 +40,12 @@ class OrtModel:
     async def __call__(self, request: Request):
         return await handle(request, self.cfg, self._infer)
 
+    async def ModelInfer(self, request):
+        """Ray gRPC ingress (KServe v2 protobuf); enabled with GRPC=1 / grpc_options."""
+        from bench.protocol.kserve_grpc import decode_infer_request, encode_infer_response
+        dense, sparse = decode_infer_request(request)
+        return encode_infer_response(request.model_name, await self._infer(dense, sparse))
+
 
 def app_builder(args: dict):
     cfg = ServeConfig.from_args(args)

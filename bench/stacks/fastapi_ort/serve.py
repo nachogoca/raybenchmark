@@ -17,6 +17,7 @@ def main() -> None:
         access_log=False,
         http="httptools",
         loop="uvloop",
+        limit_concurrency=cfg.uvicorn_limit_concurrency or None,
     )
 
 

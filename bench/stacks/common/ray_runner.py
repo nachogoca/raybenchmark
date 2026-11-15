@@ -51,16 +51,40 @@ def run_local(app_builder: Callable[[dict], object], cfg: ServeConfig) -> None:
         _metrics_export_port=int(os.environ.get("RAY_METRICS_PORT", "8080")),
         logging_level="warning",
     )
-    serve.start(http_options={"host": "0.0.0.0", "port": cfg.port}, proxy_location="HeadOnly")
+    kw = {}
+    if cfg.grpc:
+        kw["grpc_options"] = {
+            "port": 9000,
+            "grpc_servicer_functions": [
+                "tritonclient.grpc.service_pb2_grpc.add_GRPCInferenceServiceServicer_to_server"],
+        }
+    serve.start(http_options={"host": "0.0.0.0", "port": cfg.port}, proxy_location="HeadOnly", **kw)
     serve.run(app_builder(cfg.as_dict()), blocking=True, route_prefix="/")
 
 
-def concurrency_args(cfg: ServeConfig) -> dict:
-    return {
-        "num_replicas": cfg.replicas,
+def concurrency_args(cfg: ServeConfig, **over) -> dict:
+    """Deployment options shared by every Ray stack: replicas or autoscaling, backpressure."""
+    opts: dict = {
         "max_ongoing_requests": cfg.max_ongoing,
         "ray_actor_options": {"num_cpus": cfg.cpus_per_replica},
     }
+    if cfg.autoscale_max > 0:
+        opts["autoscaling_config"] = {
+            "min_replicas": cfg.autoscale_min, "max_replicas": cfg.autoscale_max,
+            "initial_replicas": cfg.autoscale_min,
+            "target_ongoing_requests": cfg.autoscale_target,
+            "upscale_delay_s": cfg.autoscale_upscale_delay_s,
+            "downscale_delay_s": cfg.autoscale_downscale_delay_s,
+            "metrics_interval_s": 1.0, "look_back_period_s": 5.0,
+        }
+        # replicas share the fixed core budget: size each for the max fleet
+        opts["ray_actor_options"] = {"num_cpus": max(cfg.total_cpus / cfg.autoscale_max, 0.1)}
+    else:
+        opts["num_replicas"] = cfg.replicas
+    if cfg.max_queued >= 0:
+        opts["max_queued_requests"] = cfg.max_queued
+    opts.update(over)
+    return opts
 
 
 def to_thread(fn, *a):

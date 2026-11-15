@@ -19,7 +19,12 @@ dependencies = [
 
 [dependency-groups]
 export = ["torch", "onnx", "onnxscript"]        # model generation only
-analysis = ["pandas", "matplotlib", "pyarrow"]  # report only
+analysis = [
+    "pandas",
+    "matplotlib",
+    "pyarrow",
+    "plotly>=7.1.0",
+]  # report only
 dev = ["pytest", "ruff"]
 
 [tool.uv]

@@ -1,67 +1,58 @@
-import itertools
+import orjson
 
-import pandas as pd
-
-from bench.report import build, charts
-
-
-def _write(tmp_path):
-    cap, lad, ov = [], [], []
-    for stack, rows, rep, bat, slo in itertools.product(
-        ["fastapi_ort", "ray_ort"], [1, 200], [1, 4], [False, True], [20, 50, 100]
-    ):
-        c = 100 * rep * slo / 20 / (1 + rows / 50) * (1.5 if bat else 1)
-        cap.append(
-            dict(env="laptop-cpu", stack=stack, arch="deepfm", size="small", model="deepfm",
-                 rows=rows, batching=bat, replicas=rep, pod_cpu=1, slo_ms=slo, capacity_rps=c,
-                 confirmed=slo != 20, reps=3, rows_per_s=c * rows, p50_ms=3, p99_ms=slo * 0.9,
-                 cpu_cores=rep * 0.8, cpu_util_pct=80, rss_peak_mb=500,
-                 usd_per_1m_req=0.05 if stack == "ray_ort" else None, usd_per_1b_rows=None)
-        )
-        for rate in (10, 50, 200):
-            lad.append(
-                dict(env="laptop-cpu", stack=stack, arch="deepfm", size="small", model="deepfm",
-                     rows=rows, batching=bat, replicas=rep, pod_cpu=1, run_id="r1",
-                     step_kind="search", rate=rate, p99_ms=rate / 4 + 5)
-            )
-    for stack in ("fastapi_ort", "ray_ort"):
-        for f in (1.5, 3.0):
-            ov.append(
-                dict(env="laptop-cpu", stack=stack, arch="deepfm", size="small", model="deepfm",
-                     rows=1, batching=True, replicas=4, pod_cpu=1, factor=f, rate=100,
-                     achieved_rps=90, p50_ms=5, p99_ms=40 * f, max_ms=90, err_rate_pct=f,
-                     dropped=0, cpu_cores_mean=3)
-            )
-    cold = [
-        dict(env="laptop-cpu", stack=s, arch="deepfm", size="small", model="deepfm", replicas=4,
-             batching=True, start_to_ready_s=t, rss_idle_mb=200, image_size_mb=900, n=1)
-        for s, t in (("fastapi_ort", 3), ("ray_ort", 9))
-    ]
-    for name, rows in (("capacity", cap), ("ladder", lad), ("overload", ov), ("coldstart", cold)):
-        pd.DataFrame(rows).to_csv(tmp_path / f"{name}.csv", index=False)
+from bench.report import analyze as an
+from bench.report import report
 
 
-def test_report(tmp_path):
-    _write(tmp_path)
-    figs = tmp_path / "figures"
-    out = charts.make_all(tmp_path, figs)
-    names = {p.name for p in out}
-    assert names == {
-        "latency_vs_rate_laptop-cpu.svg",
-        "throughput_vs_replicas_laptop-cpu.svg",
-        "cost_per_slo_laptop-cpu.svg",
-    }
-    assert all(p.exists() for p in out)
-    md, app = tmp_path / "REPORT.md", tmp_path / "APPENDIX.md"
-    build.build(tmp_path, figs, md, app)
-    text = md.read_text()
-    assert "| Stack | Best config (batching, replicas) | Capacity req/s |" in text
-    for n in names:
-        assert f"figures/{n})" in text
-    assert "Recommendation" in text
-    assert len(text.splitlines()) < 80
-    assert "## Cold start" in app.read_text()
+def _step(stack, rate, p99, scen="S1", kind="grid", rep=0, variant="rep0", **kw):
+    dist = {"pcts": {"50": p99 / 2, "75": p99 * .7, "90": p99 * .8, "95": p99 * .9, "99": p99, "99.9": p99 * 1.5,
+                     "99.99": p99 * 2, "100": p99 * 3}, "mean_ms": p99 / 2,
+            "hist": {"lo_ms": .05, "hi_ms": 20000, "buckets": 240, "counts": [0] * 100 + [10] + [0] * 139},
+            "series": [{"t": t, "rps": rate, "ok": rate, "err": 0, "p50": p99 / 2, "p99": p99} for t in range(10)],
+            "error_codes": {}, "n": 100, "n_err": 0, "t0": 0.0}
+    return {"run_id": "r", "scenario": scen, "variant": variant, "stack": stack, "step_kind": kind, "rate": rate,
+            "rep": rep, "rows": 200, "replicas": 1, "batching": False, "total_cpus": 6, "valid": True,
+            "duration_s": 30,
+            "k6": {"ok": rate * 30, "err": 0, "dropped_iterations": 0, "achieved_rps": rate,
+                   "latency_ms": {"avg": p99 / 2, "p50": p99 / 2, "p90": p99 * .8, "p99": p99, "max": p99 * 3}, "dist": dist},
+            "res": {"cpu_cores_mean": rate / 100, "rss_peak_mb": 500, "cpu_by_component": {"uvicorn": rate / 100}, "cpu_core_seconds": 30},
+            "prom": {}, **kw}
 
 
-def test_empty_inputs(tmp_path):
-    assert charts.make_all(tmp_path, tmp_path / "f") == []
+def _rows():
+    rows = []
+    for stack, scale in (("fastapi_ort", 1.0), ("ray_ort", 1.5)):
+        for rep in range(3):
+            for rate in (50, 100, 200, 300):
+                rows.append(_step(stack, rate, 4 * np_exp(rate * scale / 100), rep=rep, variant=f"rep{rep}"))
+        rows.append({"step_kind": "coldstart", "scenario": "S1", "variant": "rep0", "stack": stack, "replicas": 1,
+                     "coldstart": {"start_to_ready_s": 3.0, "rss_idle_mb": 80.0, "image_size_mb": 700.0}})
+    return rows
+
+
+def np_exp(x):
+    import math
+    return math.exp(x)
+
+
+def test_capacity_and_report(tmp_path, monkeypatch):
+    monkeypatch.setattr(an, "RESULTS", tmp_path)
+    (tmp_path / "runs").mkdir()
+    (tmp_path / "laptop.jsonl").write_bytes(b"\n".join(orjson.dumps(r) for r in _rows()))
+    df = an.flatten(an.load_rows("laptop"))
+    cap = an.s1_capacity(df, [20, 50, 100]).set_index(["stk", "slo"])
+    # fastapi p99 = 4*exp(rate/100): 50ms -> rate<=252 -> grid 200; ray_ort slower -> 100
+    assert cap.loc[("fastapi_ort", 50), "capacity"] == 200
+    assert cap.loc[("ray_ort", 50), "capacity"] == 100
+    assert cap.loc[("fastapi_ort", 50), "lo"] <= 200 <= cap.loc[("fastapi_ort", 50), "hi"]
+    out = report.build("laptop", tmp_path / "r.html", tmp_path / "REPORT.md")
+    text = out.read_text()
+    assert "Executive summary" in text and "FastAPI + ORT" in text and "plotly" in text.lower()
+    assert "No data" in text                       # scenarios that did not run are labelled, not hidden
+    assert "| FastAPI + ORT | 200 |" in (tmp_path / "REPORT.md").read_text()
+
+
+def test_recovery_seconds():
+    series = [{"t": t, "p99": 500 if t < 5 else 20, "err": 0} for t in range(20)]
+    assert an.recovery_s(series, 0, 50, hold=3) == 5.0
+    assert an.recovery_s(series, 0, 10, hold=3) is None
