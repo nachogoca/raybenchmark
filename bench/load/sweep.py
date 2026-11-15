@@ -113,7 +113,7 @@ class Sweep:
              steps: str = "", grpc: bool = False, hook=None, hook_at_s: float = 0.0, **extra) -> dict:
         warm = warm_s if warm_s is not None else (self.m["warmup_s"] if long else self.m["search"]["warmup_s"])
         meas = meas_s if meas_s is not None else (self.m["measure_s"] if long else self.m["search"]["measure_s"])
-        if self.p.get("quick"):                     # pipeline check: never spend more than a few seconds per step
+        if self.p.get("quick") and hook is None:    # pipeline check: a few seconds per step (a kill hook needs its full window)
             warm, meas = min(warm, 3), min(meas, 8)
         if shape == "step":
             meas = sum(int(x.split(":")[1]) for x in steps.split(","))
@@ -146,10 +146,10 @@ class Sweep:
         restarts0 = self.backend.restart_count() if hasattr(self.backend, "restart_count") else 0
         t_start = time.time()
         t_measure = t_start + warm
-        timer = None
+        timer, hook_out = None, []
         if hook is not None:
             row["hook_at_unix"] = t_measure + hook_at_s
-            timer = threading.Timer(warm + hook_at_s, hook)
+            timer = threading.Timer(warm + hook_at_s, lambda: hook_out.append(hook()))
             timer.daemon = True
             timer.start()
         try:
@@ -171,6 +171,10 @@ class Sweep:
             reasons.append("container restarted")
         if k6.get("dist_error"):
             reasons.append("dist parse failed")
+        if hook is not None:
+            row["hook_result"] = hook_out[0] if hook_out else None
+            if not hook_out or not hook_out[0]:
+                reasons.append("hook did not hit anything (no process killed)")
         row["valid"], row["invalid_reasons"] = not reasons, reasons
         self.write(row)
         self.mem.append(row)

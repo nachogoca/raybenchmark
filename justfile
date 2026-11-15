@@ -126,7 +126,14 @@ overnight: preflight build-serving
     uv run python -m bench.monitor --watch 60 >/dev/null 2>&1 &
     MON=$!
     trap 'kill $MON 2>/dev/null' EXIT
-    uv run python -m bench.load.sweep --profile full
+    # The sweep is resume-safe: if it crashes, restart it (up to 5 times). Exit code 3 = stopped on purpose (low disk).
+    for attempt in 1 2 3 4 5; do
+        uv run python -m bench.load.sweep --profile full && break
+        code=$?
+        [ "$code" -eq 3 ] && { echo "stopped: disk low"; exit 3; }
+        echo "sweep exited with code $code (attempt $attempt); resuming in 60 s"
+        sleep 60
+    done
     uv run python -m bench.report.report
 
 # Is the run alive? Process, progress, last log line, disk, containers, alerts. Refreshes every 30 s.

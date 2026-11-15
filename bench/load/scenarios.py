@@ -281,7 +281,7 @@ def F3(sw) -> None:
     names = family(16)
     for K in q(sw, c["ks"], 2):
         specs = [
-            ("ray_fanout", "ray_family", {"FAMILY_MODE": "fanout", "FANOUT_K": K, "REPLICAS": 2}, ""),
+            ("ray_fanout", "ray_family", {"FAMILY_MODE": "fanout", "FANOUT_K": K, "REPLICAS": 2, "MUX_MODELS_PER_REPLICA": 16}, ""),
             ("fastapi_fanout", "fastapi_ort", {"FAMILY_MODE": "fanout", "FANOUT_K": K}, ""),
             ("triton_ensemble", "triton", {"FAMILY_MODE": "mux", "ENSEMBLES": 1}, f"fan{K}_" if K > 1 else ""),
         ]
@@ -301,7 +301,7 @@ def F5(sw) -> None:
     c = sc(sw, "F5")
     names = family(16)
     specs = [
-        ("ray_pipeline", "ray_family", {"FAMILY_MODE": "pipeline", "REPLICAS": 2}, ""),
+        ("ray_pipeline", "ray_family", {"FAMILY_MODE": "pipeline", "REPLICAS": 2, "MUX_MODELS_PER_REPLICA": 16}, ""),
         ("fastapi_pipeline", "fastapi_ort", {"FAMILY_MODE": "pipeline"}, ""),
         ("triton_pipeline", "triton", {"FAMILY_MODE": "mux", "ENSEMBLES": 1}, "pipe_"),
     ]
@@ -361,8 +361,8 @@ def R2(sw) -> None:
                 def hook(be=be, spec=spec):
                     if spec.get("kill") == "container":
                         be.kill_container(spec["stack"])
-                    else:
-                        be.kill_matching(spec["kill"], n=1)
+                        return [spec["stack"]]
+                    return be.kill_matching(spec["kill"], n=1)
                 meas = 20 if sw.p.get("quick") else int(c["measure_s"])
                 sw.step(cfg, 200, kind="failure", rate=int(c["rate"]), long=True, rep=rep, warm_s=10,
                         meas_s=meas, hook=None if sw.dry else hook, hook_at_s=meas * 0.35, policy=name)

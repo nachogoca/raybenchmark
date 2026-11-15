@@ -54,7 +54,7 @@ TESTS = {
     "I1": ("Ingress",
            "What does the ingress layer cost?",
            "Ray behind the Python proxy, HAProxy and gRPC ingress; Triton over HTTP and gRPC.",
-           "p99 at fixed offered loads, and capacity.",
+           "p99 at fixed offered loads, and capacity. The k6 gRPC client is CPU-heavy: gRPC steps above about 200 req/s can be limited by the load generator and are then flagged invalid.",
            "The ingress is the first hop: it accepts the request and routes it to a replica. Ray's default is a Python proxy actor. HAProxy is a native proxy that routes straight to replicas. gRPC replaces JSON over HTTP with a binary protocol."),
     "F1": ("Model family (multiplexing)",
            "How do multi-model layouts compare for a 16-model family under Zipf-skewed traffic?",

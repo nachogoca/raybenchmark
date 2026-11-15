@@ -123,7 +123,7 @@ class _ImmediateTimer:
         self.fn, self.daemon, self.cancelled = fn, False, False
 
     def start(self):
-        self.fn()
+        self.fn()                       # runs the hook (and its result is captured by the step)
 
     def cancel(self):
         self.cancelled = True

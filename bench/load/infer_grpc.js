@@ -2,6 +2,7 @@
 // proxy (:9000). Same env contract and same `measure_latency` metric; the `status` tag is "200"
 // for gRPC OK and "5<code>" otherwise, so bench.collect.k6parse treats both scripts alike.
 import grpc from 'k6/net/grpc';
+import encoding from 'k6/encoding';
 import exec from 'k6/execution';
 import { SharedArray } from 'k6/data';
 import { Trend, Counter } from 'k6/metrics';
@@ -39,21 +40,29 @@ export const options = {
   scenarios: { warmup: scenario('0s', WARMUP), measure: scenario(`${secs(WARMUP)}s`, DURATION) },
 };
 
+// Tensors go as raw little-endian bytes (raw_input_contents, base64 in k6's message mapping): much
+// cheaper for k6 than marshalling thousands of numbers per request, which saturated the load generator.
+function f32bytes(vals) { return encoding.b64encode(new Float32Array(vals).buffer); }
+function i64bytes(vals) {
+  const buf = new ArrayBuffer(vals.length * 8), dv = new DataView(buf);
+  vals.forEach((v, i) => { dv.setInt32(i * 8, v, true); dv.setInt32(i * 8 + 4, v < 0 ? -1 : 0, true); });
+  return encoding.b64encode(buf);
+}
 function toRequest(b) {
   const [d, s] = b.inputs;
-  return { model_name: MODEL, inputs: [
-    { name: d.name, datatype: 'FP32', shape: d.shape, contents: { fp32_contents: d.data } },
-    { name: s.name, datatype: 'INT64', shape: s.shape, contents: { int64_contents: s.data } } ] };
+  return { model_name: MODEL,
+           inputs: [{ name: d.name, datatype: 'FP32', shape: d.shape }, { name: s.name, datatype: 'INT64', shape: s.shape }],
+           raw_input_contents: [f32bytes(d.data), i64bytes(s.data)] };
 }
 const requests = bodies.map(toRequest);
 const params = { metadata: APP ? { application: APP } : {}, timeout: __ENV.TIMEOUT || '10s' };
 
 export default function () {
   if (exec.vu.iterationInScenario === 0) client.connect(TARGET, { plaintext: true });
-  const t0 = performance.now();             // k6's gRPC response has no timings: time the call ourselves
+  const t0 = exec.instance.currentTestRunDuration;   // ms, sub-ms resolution; k6 gRPC responses carry no timings
   const res = client.invoke('inference.GRPCInferenceService/ModelInfer',
                             requests[Math.floor(Math.random() * requests.length)], params);
-  const ms = performance.now() - t0;
+  const ms = exec.instance.currentTestRunDuration - t0;
   if (exec.scenario.name !== 'measure') return;
   const ok = res && res.status === grpc.StatusOK;
   latency.add(ms, { status: ok ? '200' : `5${res.status}` });
