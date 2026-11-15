@@ -6,6 +6,19 @@ multiplexing, composition, autoscaling, backpressure, gRPC ingress and failure h
 stack serves the same KServe v2 JSON route, `POST /v2/models/<arch>_<size>/infer`, and is loaded
 with k6. Every result row records the tool and image versions (`bench/versions.py`).
 
+## What it measures
+
+It compares ways to serve a model: FastAPI, Triton and Ray Serve.
+
+- **Measures:** latency, capacity, CPU, memory and cost.
+- **Speed test:** more and more load.
+- **Replicas and batching:** does adding copies or grouping requests help?
+- **Ingress:** Python proxy, HAProxy or gRPC.
+- **Many models:** shared in one service.
+- **Steps in a row:** one request through several models.
+- **Auto-scaling:** the load jumps 10×.
+- **Too much load, and a dead process.**
+
 ## Stacks
 
 | Stack | What it is | Compose profile |

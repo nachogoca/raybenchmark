@@ -3,7 +3,7 @@
 Every scenario brings stacks up one config at a time, runs k6 steps through `Sweep.step` (so every
 step gets the same sampling, validity checks and jsonl row) and marks the config `done` so an
 interrupted night resumes. Parameters live in config/matrix.yaml under `scenarios:`; `quick: true`
-in a profile shrinks everything to a pipeline check.
+in a profile keeps every config but shrinks steps, repetitions and ladders to a pipeline check.
 """
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ def sc(sw, name: str) -> dict:
 # ---------------------------------------------------------------- scenarios
 def S1(sw) -> None:
     c = sc(sw, "S1")
-    stacks = q(sw, c["stacks"], 2)
+    stacks = c["stacks"]
     n = reps(sw, "S1", 3)
     for rep in range(n):
         order = list(stacks)
@@ -183,7 +183,7 @@ def S1_batch(sw) -> None:
 
 def I1(sw) -> None:
     c = sc(sw, "I1")
-    for name, spec in q(sw, list(c["variants"].items()), 3):
+    for name, spec in c["variants"].items():
         cfg = mk(sw, spec["stack"], "I1", variant=name, env=spec.get("env"))
         if _skip(sw, cfg):
             continue
@@ -208,7 +208,7 @@ def F1(sw) -> None:
     specs.append(("fastapi16", "fastapi_ort", 16, {"FAMILY_MODE": "mux"}))
     for n in c["scale_variants"]:                     # Ray mux with a growing family, cache of 16
         specs.append((f"mux16_v{n}", "ray_family", n, {"FAMILY_MODE": "mux", "MUX_MODELS_PER_REPLICA": 16, "REPLICAS": 2}))
-    for variant, stack, n, env in q(sw, specs, 2):
+    for variant, stack, n, env in specs:
         env = {**env, "VARIANTS": n}
         replicas = int(env.get("REPLICAS", 1))
         cfg = mk(sw, stack, "F1", variant=variant, replicas=replicas, env=env)
@@ -248,7 +248,7 @@ def F2(sw) -> None:
                                        "TRITON_ARGS": "--model-control-mode=explicit --load-model=" + names[0]},
          "http://localhost:8100"),
     ]
-    for variant, stack, env, url in q(sw, specs, 1):
+    for variant, stack, env, url in specs:
         cfg = mk(sw, stack, "F2", variant=variant, env=env)
         if _skip(sw, cfg) or sw.dry:
             continue
@@ -284,7 +284,7 @@ def F3(sw) -> None:
             ("fastapi_fanout", "fastapi_ort", {"FAMILY_MODE": "fanout", "FANOUT_K": K}, ""),
             ("triton_ensemble", "triton", {"FAMILY_MODE": "mux", "ENSEMBLES": 1}, f"fan{K}_" if K > 1 else ""),
         ]
-        for variant, stack, env, prefix in q(sw, specs, 2):
+        for variant, stack, env, prefix in specs:
             cfg = mk(sw, stack, "F3", variant=f"{variant}_k{K}", replicas=int(env.get("REPLICAS", 1)),
                      env={**env, "VARIANTS": 16})
             if _skip(sw, cfg):
@@ -304,7 +304,7 @@ def F5(sw) -> None:
         ("fastapi_pipeline", "fastapi_ort", {"FAMILY_MODE": "pipeline"}, ""),
         ("triton_pipeline", "triton", {"FAMILY_MODE": "mux", "ENSEMBLES": 1}, "pipe_"),
     ]
-    for variant, stack, env, prefix in q(sw, specs, 2):
+    for variant, stack, env, prefix in specs:
         cfg = mk(sw, stack, "F5", variant=variant, replicas=int(env.get("REPLICAS", 1)),
                  env={**env, "VARIANTS": 16})
         if _skip(sw, cfg):
@@ -321,7 +321,7 @@ def A1(sw) -> None:
     steps = f"{base}:{c['pre_s']},{peak}:{c['burst_s']},{base}:{c['post_s']}"
     if sw.p.get("quick"):
         steps = f"{base}:5,{peak}:10,{base}:5"
-    for name, spec in q(sw, list(c["variants"].items()), 2):
+    for name, spec in c["variants"].items():
         for rep in range(reps(sw, "A1", 3)):
             cfg = mk(sw, "ray_ort", "A1", variant=f"{name}_rep{rep}", replicas=int(spec.get("replicas", 1)),
                      env=spec["env"])
@@ -334,7 +334,7 @@ def A1(sw) -> None:
 
 def R1(sw) -> None:
     c = sc(sw, "R1")
-    for name, spec in q(sw, list(c["variants"].items()), 2):
+    for name, spec in c["variants"].items():
         cfg = mk(sw, spec["stack"], "R1", variant=name, batching=bool(spec.get("batching")), env=spec.get("env"))
         if _skip(sw, cfg):
             continue
@@ -348,7 +348,7 @@ def R1(sw) -> None:
 
 def R2(sw) -> None:
     c = sc(sw, "R2")
-    for name, spec in q(sw, list(c["variants"].items()), 1):
+    for name, spec in c["variants"].items():
         for rep in range(reps(sw, "R2", 3)):
             cfg = mk(sw, spec["stack"], "R2", variant=f"{name}_rep{rep}", replicas=int(spec.get("replicas", 2)),
                      env=spec.get("env"))

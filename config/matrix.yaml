@@ -120,7 +120,7 @@ scenarios:
 profiles:
   full:                         # `just overnight`: ~9 h, resume-safe
     scenarios: [S1, S1_scale, S1_batch, I1, F1, F2, F3, F5, A1, R1, R2]
-  smoke:                        # `just smoke`: every scenario shrunk to a pipeline check, ~25 min
+  smoke:                        # `just smoke`: every config of every test, short steps, ~1 h
     quick: true
     scenarios: [S1, S1_scale, S1_batch, I1, F1, F2, F3, F5, A1, R1, R2]
 
