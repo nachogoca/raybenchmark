@@ -109,12 +109,17 @@ logs stack:
 preflight:
     uv run python -c "from bench.collect.host import preflight; [print(('ok  ' if ok else 'FIX ') + c + ('' if ok else '   -> ' + h)) for c, ok, h in preflight()]"
 
+# Servers run from images with a frozen copy of the code: rebuild after any code change.
+build-serving:
+    docker build -q -f deploy/docker/Dockerfile.python -t raybench-py:{{tag}} .
+    docker build -q -f deploy/docker/Dockerfile.triton-ray -t raybench-triton-ray:{{tag}} .
+
 # Every scenario shrunk to a pipeline check (~25 min). Writes bench/results/laptop.jsonl.
-smoke:
+smoke: build-serving
     uv run python -m bench.load.sweep --profile smoke
 
 # The full run (~9 h, resume-safe: re-run the same command after an interruption), then the report.
-overnight: preflight
+overnight: preflight build-serving
     uv run python -m bench.load.sweep --profile full
     uv run python -m bench.report.report
 
