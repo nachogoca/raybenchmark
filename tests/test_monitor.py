@@ -86,3 +86,13 @@ def test_every_container_log_is_capped():
         if "cpuset" in svc:
             assert svc["logging"]["options"]["max-size"] == "20m", name
     assert monitor.GUARDS["min_free_gb"] >= 10
+
+
+def test_latest_log_ignores_the_monitor_own_log(monkeypatch, tmp_path):
+    import os
+    import time
+    monkeypatch.setattr(monitor, "RUNS", tmp_path)
+    (tmp_path / "run.log").write_text("x")
+    (tmp_path / "monitor.log").write_text("y")
+    os.utime(tmp_path / "run.log", (time.time() - 100, time.time() - 100))
+    assert monitor.latest_log().name == "run.log"

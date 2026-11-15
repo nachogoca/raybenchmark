@@ -57,7 +57,9 @@ def _make(tmp_path, monkeypatch, profile="smoke", scenarios=None):
     monkeypatch.setattr("bench.versions.collect", lambda: {"fake": "1"})
     a = argparse.Namespace(profile=profile, env="laptop", scenarios=scenarios, dry_run=False,
                            no_resume=False, tag="local", registry="")
-    return sw.Sweep(a)
+    s = sw.Sweep(a)
+    s.m["guards"]["min_free_gb"] = 0          # tmp dirs live on a small RAM disk; the guard has its own test
+    return s
 
 
 @pytest.fixture

@@ -50,11 +50,13 @@ const params = { metadata: APP ? { application: APP } : {}, timeout: __ENV.TIMEO
 
 export default function () {
   if (exec.vu.iterationInScenario === 0) client.connect(TARGET, { plaintext: true });
+  const t0 = performance.now();             // k6's gRPC response has no timings: time the call ourselves
   const res = client.invoke('inference.GRPCInferenceService/ModelInfer',
                             requests[Math.floor(Math.random() * requests.length)], params);
+  const ms = performance.now() - t0;
   if (exec.scenario.name !== 'measure') return;
   const ok = res && res.status === grpc.StatusOK;
-  latency.add(res.timings ? res.timings.duration : 0, { status: ok ? '200' : `5${res.status}` });
+  latency.add(ms, { status: ok ? '200' : `5${res.status}` });
   if (ok) { okCount.add(1); rowCount.add(parseInt(ROWS)); } else { errCount.add(1); }
 }
 

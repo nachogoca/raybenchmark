@@ -50,8 +50,9 @@ def test_capacity_and_report(tmp_path, monkeypatch):
     assert cap.loc[("fastapi_ort", 50), "capacity"] == 200
     assert cap.loc[("ray_ort", 50), "capacity"] == 100
     assert cap.loc[("fastapi_ort", 50), "lo"] <= 200 <= cap.loc[("fastapi_ort", 50), "hi"]
-    out = report.build("laptop", tmp_path / "r.html", tmp_path / "REPORT.md")
+    out = report.build("laptop", tmp_path / "r.html", tmp_path / "REPORT.md", note="Incomplete smoke test: x")
     text = out.read_text()
+    assert "Incomplete smoke test: x" in text and "(incomplete)" in text
     assert "Summary" in text and "FastAPI + ORT" in text and "plotly" in text.lower()
     assert "No data" in text                       # scenarios that did not run are labelled, not hidden
     assert "| FastAPI + ORT | 200 |" in (tmp_path / "REPORT.md").read_text()
@@ -76,9 +77,9 @@ def test_full_report_from_every_scenario(tmp_path, monkeypatch):
     monkeypatch.setattr(an, "RESULTS", tmp_path)
     out = report.build("laptop", tmp_path / "r.html", tmp_path / "REPORT.md")
     text = out.read_text()
-    for needle in ("Summary", "Latency at each load", "Capacity", "More replicas", "CPU and memory", "Cost",
-                   "Auto-scaling when load jumps 10×", "Too much load: what each stack does", "A process dies",
-                   "Many models in one service", "One request, many models", "Steps in a row", "Ingress", "Appendix"):
+    for needle in ("Summary", "Latency vs offered load", "Capacity", "Replica scaling", "Resource usage", "Cost",
+                   "Autoscaling under a 10× burst", "Overload and backpressure", "Failure recovery",
+                   "Model family", "Ensemble fan-out", "Multi-stage pipeline", "Ingress", "Batching", "Software versions", "Appendix"):
         assert needle in text, needle
     assert "Traceback" not in text
     # standalone: no local machine, file or command references, and no cryptic test ids, outside the Plotly code
@@ -90,4 +91,9 @@ def test_full_report_from_every_scenario(tmp_path, monkeypatch):
         assert bad not in plain, bad
     for ident in ("S1", "I1", "F1", "F2", "F3", "F5", "A1", "R1", "R2"):
         assert not re.search(rf"\b{ident}\b", plain), ident
-    assert "The tests" in plain and "Main speed test" in plain and "A process dies" in plain
+    assert plain.count("Question.") == 11                          # every test explained in its own section
+    assert plain.index("Software versions") < plain.rindex("Appendix")      # versions before the appendix
+    summary = re.sub(r"<[^>]+>", " ", visible[visible.index('id="summary"'):visible.index('id="method"')])
+    assert "Tests:" in summary and "Failure recovery" in summary and "Question." not in summary   # titles only
+    assert "values above 250 ms are cut off" in text                # p99 charts have a capped axis
+    assert "Words used here" not in plain

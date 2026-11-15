@@ -40,7 +40,7 @@ def find_sweep() -> psutil.Process | None:
 
 
 def latest_log() -> Path | None:
-    logs = sorted(RUNS.glob("*.log"), key=lambda f: f.stat().st_mtime)
+    logs = sorted((f for f in RUNS.glob("*.log") if f.name != "monitor.log"), key=lambda f: f.stat().st_mtime)
     return logs[-1] if logs else None
 
 
