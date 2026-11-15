@@ -119,9 +119,19 @@ smoke: build-serving
     uv run python -m bench.load.sweep --profile smoke
 
 # The full run (~9 h, resume-safe: re-run the same command after an interruption), then the report.
+# A monitor runs beside it and logs to bench/results/runs/monitor.log.
 overnight: preflight build-serving
+    #!/usr/bin/env bash
+    set -u
+    uv run python -m bench.monitor --watch 60 >/dev/null 2>&1 &
+    MON=$!
+    trap 'kill $MON 2>/dev/null' EXIT
     uv run python -m bench.load.sweep --profile full
     uv run python -m bench.report.report
+
+# Is the run alive? Process, progress, last log line, disk, containers, alerts. Refreshes every 30 s.
+monitor:
+    uv run python -m bench.monitor --watch 30
 
 # Time estimate without starting anything.
 estimate:

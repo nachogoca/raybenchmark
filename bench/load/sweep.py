@@ -19,6 +19,7 @@ from pathlib import Path
 import orjson
 import yaml
 
+from bench.collect.disk import free_gb
 from bench.collect.host import HostWatch
 from bench.collect.prom import PromSampler
 from bench.collect.sampler import Sampler
@@ -92,6 +93,18 @@ class Sweep:
     def config_key(self, cfg: StackCfg) -> str:
         return (f"{self.env}|{cfg.scenario}|{cfg.stack}|{cfg.variant}|{cfg.replicas}|{int(cfg.batching)}")
 
+    def check_disk(self) -> None:
+        """Stop cleanly (resume later) when free disk drops below the guard. Never fill the disk."""
+        floor = float(self.m.get("guards", {}).get("min_free_gb", 15))
+        free = free_gb(RESULTS)
+        if free < floor:
+            msg = f"DISK LOW: {free:.1f} GB free < {floor:.0f} GB guard; stopping so the disk does not fill. Free space, then re-run to resume."
+            self.log(msg)
+            self.write({"run_id": self.run_id, "ts": time.time(), "step_kind": "stopped", "reason": msg, "stack": "", "scenario": "", "variant": ""})
+            with contextlib.suppress(Exception):
+                self.backend.down()
+            raise SystemExit(3)
+
     # ---------- one k6 step ----------
     def step(self, cfg: StackCfg, rows: int, *, kind: str, mode: str = "rate", rate: int = 0,
              vus: int = 0, long: bool, rep: int = 0, warm_s: int | None = None,
@@ -105,6 +118,8 @@ class Sweep:
             meas = sum(int(x.split(":")[1]) for x in steps.split(","))
         self.total_steps += 1
         self.est_s += warm + meas + 8
+        if not self.dry:
+            self.check_disk()
         row = self.base_row(cfg, rows=rows, step_kind=kind, mode=mode, rate=rate, vus=vus,
                             duration_s=meas, warmup_s=warm, rep=rep, shape=shape, steps=steps,
                             n_models=len(models.split(",")) if models else 1, zipf_s=zipf_s,

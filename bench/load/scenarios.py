@@ -49,6 +49,7 @@ def stack_up(sw, cfg: StackCfg):
         if sw.dry:
             sw.est_s += 60
         else:
+            sw.check_disk()
             info = sw.backend.up(cfg)
             sw.write(sw.base_row(cfg, step_kind="coldstart", coldstart=info.__dict__))
         yield

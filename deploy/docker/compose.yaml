@@ -43,6 +43,10 @@ x-env: &env
 x-limits: &limits
   cpuset: ${SERVING_CPUSET:-0-1}
   mem_limit: ${MEM_LIMIT:-8g}
+  # Ray logs every request; without a cap a long step writes hundreds of MB per container.
+  logging:
+    driver: json-file
+    options: {max-size: "20m", max-file: "2"}
 
 x-py-health: &py-health
   test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8000}/healthz', timeout=2)"]

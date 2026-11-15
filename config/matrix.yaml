@@ -7,6 +7,10 @@ measure_s: 60
 reps: 3
 error_budget: 0                 # any non-2xx fails the step
 
+guards:
+  min_free_gb: 15               # the run stops cleanly (and can resume) below this much free disk
+  stale_minutes: 8              # monitor: alert when the run log is silent this long
+
 ladder:                         # short search steps that FIND capacity (x factor until the loosest SLO fails)
   start_rps: 10
   factor: 1.25
