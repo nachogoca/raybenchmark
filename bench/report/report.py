@@ -704,7 +704,7 @@ def methodology_section(df, meta, rows) -> str:
 <li><b>Load:</b> k6 open-loop (constant arrival rate) on CPUs 6-7; servers on CPUs 0-5 with identical memory limits.</li>
 <li><b>Capacity:</b> highest grid rate with median-of-{nrep} p99 ≤ SLO ({slos} ms), zero errors and ≤ 0.1 % dropped arrivals; 95 % CI by bootstrapping the repetitions.</li>
 <li><b>Order:</b> stack order shuffled per repetition so thermal drift does not favour one stack; warm-up excluded from every statistic.</li>
-<li><b>Validity:</b> k6 above 80 % of its cores, CPU throttling or a container restart marks a step invalid. Invalid steps are excluded from capacity and listed in the appendix. {inval} of {len(df)} steps are invalid.</li>
+<li><b>Validity:</b> k6 above 80 % of its cores, a collapsed CPU clock (below 60 % of maximum with thermal-throttle events) or a container restart marks a step invalid. Mild throttling at the thermal limit (clock near 85 % of maximum) is the same for every stack and is not flagged. Invalid steps are excluded from capacity and listed in the appendix. {inval} of {len(df)} steps are invalid.</li>
 <li><b>Server metrics:</b> Ray, Triton and FastAPI Prometheus counters at 1 Hz; per-process CPU from cgroups and /proc.</li>
 <li><b>Model:</b> DeepFM with seeded random weights, ONNX Runtime on CPU, identical session options in every stack.</li>
 <li><b>Single host:</b> serving and load generator share one CPU package; absolute numbers will differ on a cluster.</li></ul>

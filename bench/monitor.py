@@ -103,7 +103,7 @@ def assess() -> tuple[list[str], list[str]]:
     if info["stopped"]:
         alerts.append("the run stopped itself because the disk was low")
     for n, s in cs:
-        if "Restarting" in s or "unhealthy" in s or ("Exited" in s and proc and not info["finished"] and "triton_repo" not in n):
+        if "Restarting" in s or ("Exited" in s and proc and not info["finished"] and "triton_repo" not in n):
             alerts.append(f"container {n}: {s}")
     if info["invalid"] > max(8, 0.1 * info["steps"]):       # a few are expected (e.g. gRPC load-generator limits)
         alerts.append("more than 10 % of steps are invalid (see the log)")

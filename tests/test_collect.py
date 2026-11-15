@@ -9,16 +9,29 @@ def test_parse_cpuset():
     assert host.parse_cpuset("3") == [3]
 
 
-def test_hostwatch_flags_hot_cpu(monkeypatch):
-    monkeypatch.setattr(host, "cpu_freq_mhz", lambda cpus: 3000.0)
-    temps = iter([70.0, 97.0])
-    monkeypatch.setattr(host, "package_temp_c", lambda: next(temps))
+def test_hostwatch_throttle_rule(monkeypatch):
+    """Throttle events at a healthy clock do not invalidate a step; a collapsed clock or a critical temperature does."""
+    monkeypatch.setattr(host, "_read", lambda p: "3500000" if "cpuinfo_max_freq" in str(p) else None)
+    counts = iter([100, 160])                       # 60 events during the step
+    monkeypatch.setattr(host, "throttle_total", lambda: next(counts))
+    monkeypatch.setattr(host, "cpu_freq_mhz", lambda cpus: 3000.0)      # 86 % of max
+    monkeypatch.setattr(host, "package_temp_c", lambda: 94.0)
     w = host.HostWatch("0-5")
     w.sample()
-    assert not w.summary()["throttled"]
-    w.sample()
     s = w.summary()
-    assert s["temp_max_c"] == 97.0 and s["throttled"] and s["freq_mean_mhz"] == 3000.0
+    assert s["throttle_events"] == 60 and not s["throttled"] and s["freq_mean_mhz"] == 3000.0
+    monkeypatch.setattr(host, "package_temp_c", lambda: 99.0)
+    monkeypatch.setattr(host, "throttle_total", lambda: None)
+    w2 = host.HostWatch("0-5")
+    w2.sample()
+    assert w2.summary()["throttled"]                                    # critical temperature
+    counts2 = iter([0, 5])
+    monkeypatch.setattr(host, "throttle_total", lambda: next(counts2))
+    monkeypatch.setattr(host, "cpu_freq_mhz", lambda cpus: 1800.0)      # 51 % of max
+    monkeypatch.setattr(host, "package_temp_c", lambda: 90.0)
+    w3 = host.HostWatch("0-5")
+    w3.sample()
+    assert w3.summary()["throttled"]                                    # clock collapsed, with events
 
 
 def test_preflight_reports_governor(monkeypatch):

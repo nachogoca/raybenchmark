@@ -95,13 +95,29 @@ def parse_cpuset(s: str) -> list[int]:
     return out
 
 
+def throttle_total() -> int | None:
+    """Cumulative thermal-throttle events (package + core) since boot; None if the kernel does not expose them."""
+    total, seen = 0, False
+    for f in glob.glob("/sys/devices/system/cpu/cpu*/thermal_throttle/*_throttle_count"):
+        v = _read(f)
+        if v and v.isdigit():
+            total, seen = total + int(v), True
+    return total if seen else None
+
+
 class HostWatch:
-    """Samples frequency/temperature next to the resource sampler; summary() -> flags."""
+    """Samples frequency/temperature next to the resource sampler; summary() -> flags.
+
+    A laptop-class CPU under sustained load sits at its thermal limit and records throttle events while
+    still running at ~85 % of its maximum clock. That is the steady condition for every stack, so events
+    alone do not invalidate a step. A step is `throttled` only when the clock really collapsed (mean below
+    60 % of the maximum, with events) or the package reached a critical temperature (>= 98 C)."""
 
     def __init__(self, serving_cpuset: str):
         self.cpus = parse_cpuset(serving_cpuset)
         self.freq: list[float] = []
         self.temp: list[float] = []
+        self.events0 = throttle_total()
 
     def sample(self) -> None:
         f, t = cpu_freq_mhz(self.cpus), package_temp_c()
@@ -112,15 +128,19 @@ class HostWatch:
 
     def summary(self) -> dict:
         max_f = _read(CPU0 / "cpuinfo_max_freq")
+        max_mhz = int(max_f) / 1000 if max_f and max_f.isdigit() else None
+        now = throttle_total()
+        events = (now - self.events0) if (now is not None and self.events0 is not None) else None
+        mean_f = round(sum(self.freq) / len(self.freq), 0) if self.freq else None
         out = {
-            "freq_mean_mhz": round(sum(self.freq) / len(self.freq), 0) if self.freq else None,
+            "freq_mean_mhz": mean_f,
             "freq_min_mhz": round(min(self.freq), 0) if self.freq else None,
+            "freq_max_mhz": max_mhz,
             "temp_max_c": round(max(self.temp), 1) if self.temp else None,
+            "throttle_events": events,
         }
-        out["throttled"] = bool(
-            (out["temp_max_c"] or 0) >= 95
-            or (max_f and max_f.isdigit() and out["freq_min_mhz"]
-                and out["freq_min_mhz"] < 0.5 * int(max_f) / 1000 and _read(CPU0 / "scaling_governor") != "powersave"))
+        collapsed = bool(mean_f and max_mhz and mean_f < 0.6 * max_mhz and (events or 0) > 0)
+        out["throttled"] = bool((out["temp_max_c"] or 0) >= 98 or collapsed)
         return out
 
 

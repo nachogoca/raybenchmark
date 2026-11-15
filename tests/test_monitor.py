@@ -53,6 +53,8 @@ def test_alerts_for_dead_stuck_disk_and_containers(monkeypatch, tmp_path):
     assert any("disk low" in a for a in monitor.assess()[1])
     _fake(monkeypatch, tmp_path, LOG, _Proc(), cont=[("raybench-ray_ort-1", "Restarting (1) 3 s ago")])
     assert any("Restarting" in a for a in monitor.assess()[1])
+    _fake(monkeypatch, tmp_path, LOG, _Proc(), cont=[("raybench-ray_ort-1", "Up 11 minutes (unhealthy)")])
+    assert monitor.assess()[1] == []                      # healthchecks time out while a stack is overloaded on purpose
     _fake(monkeypatch, tmp_path, LOG + "[23:00:00] == I1 done in 1.0 min (x)\n", None)
     lines, alerts = monitor.assess()
     assert "FINISHED" in lines[0] and not [a for a in alerts if "gone" in a]
