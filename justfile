@@ -14,7 +14,7 @@ setup:
     if ! docker info >/dev/null 2>&1; then
       echo "MISSING: docker daemon not reachable. Phase-0 fix:"
       echo "  sudo apt-get remove -y docker-ce docker-ce-cli containerd.io  # old 'cosmic' repo build"
-      echo "  see README.md 'Phase 0' for the docker-ce + compose plugin install"
+      echo "  install docker-ce + docker-compose-plugin from docs.docker.com/engine/install"
       echo "  sudo usermod -aG docker \$USER && newgrp docker"
       fail=1
     fi
