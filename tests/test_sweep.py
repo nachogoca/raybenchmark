@@ -93,7 +93,7 @@ def test_grid_stops_after_consecutive_failures(sweep):
 def test_smoke_scenario_writes_rows_and_resumes(tmp_path, monkeypatch):
     s = _make(tmp_path, monkeypatch, scenarios="S1,A1")
     s.run()
-    rows = [orjson.loads(line) for line in (tmp_path / "laptop.jsonl").read_text().splitlines()]
+    rows = [orjson.loads(line) for line in (tmp_path / "laptop-smoke.jsonl").read_text().splitlines()]
     kinds = {r["step_kind"] for r in rows}
     assert {"coldstart", "grid", "closed", "burst", "done"} <= kinds
     assert all(r["valid"] for r in rows if "k6" in r)
@@ -101,7 +101,7 @@ def test_smoke_scenario_writes_rows_and_resumes(tmp_path, monkeypatch):
     n = len(rows)
     s2 = _make(tmp_path, monkeypatch, scenarios="S1,A1")
     s2.run()
-    assert len((tmp_path / "laptop.jsonl").read_text().splitlines()) == n      # everything resumed
+    assert len((tmp_path / "laptop-smoke.jsonl").read_text().splitlines()) == n      # everything resumed
 
 
 def test_parse_k6_stdout():
@@ -137,7 +137,7 @@ def test_every_scenario_runs_on_fake_backend(tmp_path, monkeypatch):
     monkeypatch.setattr(sc.httpx, "post", lambda *a, **k: type("R", (), {"raise_for_status": lambda self: None})())
     s = _make(tmp_path, monkeypatch, scenarios=",".join(sc.SCENARIOS))
     s.run()
-    rows = [orjson.loads(line) for line in (tmp_path / "laptop.jsonl").read_text().splitlines()]
+    rows = [orjson.loads(line) for line in (tmp_path / "laptop-smoke.jsonl").read_text().splitlines()]
     assert not [r for r in rows if r["step_kind"] == "error"], [r.get("error") for r in rows if r["step_kind"] == "error"]
     seen = {(r["scenario"], r["step_kind"]) for r in rows}
     for expect in [("S1", "grid"), ("S1", "closed"), ("S1_scale", "search"), ("S1_batch", "search"), ("I1", "grid"),
@@ -177,7 +177,7 @@ def test_dry_run_estimates_without_side_effects(tmp_path, monkeypatch):
     s = sw.Sweep(a)
     s.run()
     assert 6 < s.est_s / 3600 < 12, s.est_s / 3600          # overnight budget
-    assert not (tmp_path / "laptop.jsonl").exists()
+    assert not (tmp_path / "laptop-smoke.jsonl").exists()
 
 
 def test_matrix_keys_are_strings():
@@ -189,3 +189,13 @@ def test_matrix_keys_are_strings():
             if isinstance(v, dict):
                 walk(v, f"{path}/{k}")
     walk(yaml.safe_load(sw.MATRIX.read_text()))
+
+
+def test_profiles_never_share_results_or_resume_keys(tmp_path, monkeypatch):
+    """A full run must not skip configs a smoke run finished, nor write into the smoke file."""
+    smoke = _make(tmp_path, monkeypatch, scenarios="S1")
+    smoke.run()
+    assert (tmp_path / "laptop-smoke.jsonl").exists() and not (tmp_path / "laptop.jsonl").exists()
+    a = argparse.Namespace(profile="full", env="laptop", scenarios="S1", dry_run=True, no_resume=False, tag="x", registry="")
+    full = sw.Sweep(a)
+    assert full.out.name == "laptop.jsonl" and not full.done_keys

@@ -74,7 +74,7 @@ def test_run_stops_cleanly_when_disk_is_low(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as e:
         s.check_disk()
     assert e.value.code == 3 and downs
-    row = orjson.loads((tmp_path / "laptop.jsonl").read_text().splitlines()[-1])
+    row = orjson.loads((tmp_path / "laptop-smoke.jsonl").read_text().splitlines()[-1])
     assert row["step_kind"] == "stopped" and "DISK LOW" in row["reason"]
     monkeypatch.setattr(sw, "free_gb", lambda p: 500.0)
     s.check_disk()                                    # plenty of space: no exit

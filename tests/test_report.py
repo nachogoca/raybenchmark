@@ -75,7 +75,7 @@ def test_full_report_from_every_scenario(tmp_path, monkeypatch):
     monkeypatch.setattr(sc.httpx, "post", lambda *a, **k: type("R", (), {"raise_for_status": lambda self: None})())
     ts._make(tmp_path, monkeypatch, scenarios=",".join(sc.SCENARIOS)).run()
     monkeypatch.setattr(an, "RESULTS", tmp_path)
-    out = report.build("laptop", tmp_path / "r.html", tmp_path / "REPORT.md")
+    out = report.build("laptop-smoke", tmp_path / "r.html", tmp_path / "REPORT.md")
     text = out.read_text()
     for needle in ("Summary", "Latency vs offered load", "Capacity", "Replica scaling", "Resource usage", "Cost",
                    "Autoscaling under a 10× burst", "Overload and backpressure", "Failure recovery",

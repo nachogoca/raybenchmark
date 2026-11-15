@@ -54,13 +54,13 @@ envs:
 scenarios:
   S1:                           # latency vs RPS, capacity, overload, closed loop (all stacks)
     stacks: [fastapi_ort, triton, ray_ort, ray_fastapi, ray_triton_grpc, ray_triton_inproc]
-    reps: 3
+    reps: 2
     rows1_rps: [25, 100, 300]   # rows=1 latency points, one rep
   S1_scale:                     # fleet scaling on one box: replicas split the same 6 cores
     stacks: [ray_ort, fastapi_ort, triton]
     replicas: [1, 2, 4]
   S1_batch:                     # stack -> {variant: [batching, wait_ms]}
-    rows: [1, 200]
+    rows: [200]
     stacks:
       ray_ort: {nobatch: [0, 5], wait2: [1, 2], wait5: [1, 5]}
       triton: {nobatch: [0, 5], dynamic: [1, 5]}
@@ -95,7 +95,7 @@ scenarios:
     pre_s: 40
     burst_s: 90
     post_s: 40
-    reps: 3
+    reps: 2
     variants:
       static1:       {replicas: 1, env: {}}
       static4:       {replicas: 4, env: {}}

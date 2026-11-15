@@ -12,7 +12,7 @@ code in `bench/load/scenarios.py`, the report in `bench/report/`.
   image versions (`bench/versions.py`) and the settings used.
 - Load is open-loop (constant arrival rate): latency is measured against the schedule, so a slow
   server cannot hide queueing by slowing the client (no coordinated omission).
-- **Capacity (MST)** at an SLO = highest grid rate whose median-of-3 p99 meets the SLO with zero
+- **Capacity (MST)** at an SLO = highest grid rate whose median-over-repetitions p99 meets the SLO with zero
   errors and ≤ 0.1 % dropped arrivals. 95 % CI by bootstrapping the repetitions.
 - **Validity:** a step is invalid, excluded from capacity and listed in the report appendix, when
   k6 used more than 80 % of its cores, the serving CPUs throttled, or a container restarted
@@ -26,15 +26,15 @@ HAProxy front end except in I1.
 
 | ID | Question | What runs |
 |---|---|---|
-| S1 | Latency at each rate; capacity per SLO | All six stacks on a common rate grid (25 … 650 req/s), 3 repetitions, rows=1 latency points, overload at 1.5×/3×, closed-loop maximum, refine steps around the knee |
+| S1 | Latency at each rate; capacity per SLO | All six stacks on a common rate grid (25 … 650 req/s), 2 repetitions, rows=1 latency points, overload at 1.5×/3×, closed-loop maximum, refine steps around the knee |
 | S1_scale | How does capacity grow with replicas? | Ray + ORT, FastAPI, Triton at 1/2/4 replicas on the same 6 cores |
-| S1_batch | When does batching help? | Ray `@serve.batch` (2/5 ms), Triton dynamic batching, at rows 1 and 200 |
+| S1_batch | When does batching help? | Ray `@serve.batch` (2/5 ms), Triton dynamic batching, at 200 rows per request |
 | I1 | What does the ingress cost? | Ray Python proxy vs HAProxy vs gRPC; Triton HTTP vs gRPC |
 | F1 | Capacity and memory of a model family under Zipf(1.1) traffic | Ray `@serve.multiplexed` (LRU 4/16), one deployment per variant, Triton 16-model repository, FastAPI 16 sessions; Ray mux at 4/64 variants |
 | F2 | First-request latency of a cold or evicted variant | Ray mux, FastAPI lazy load, Triton explicit load |
 | F3 | Cost of scoring with K variants | Ray `DeploymentHandle` gather, FastAPI `asyncio.gather`, Triton ensemble; K = 1/4/8 |
 | F5 | Cost of a pipeline | featurize → routed variant → postprocess: Ray composed deployments, FastAPI in-process, Triton ensemble with python backend |
-| A1 | How fast does Ray absorb a 10× burst? | 30 → 300 req/s for 90 s; static 1 and 4 replicas vs autoscaling (`target_ongoing_requests` 2/8, upscale delay 0/10 s); fresh stack per repetition |
+| A1 | How fast does Ray absorb a 10× burst? | 30 → 300 req/s for 90 s; static 1 and 4 replicas vs autoscaling (`target_ongoing_requests` 2/8, upscale delay 0/10 s); fresh stack per repetition, 2 runs |
 | R1 | What happens beyond capacity? | Ray `max_queued_requests`, uvicorn `--limit-concurrency`, Triton `max_queue_size` vs unbounded, at 1.5×/3× capacity: goodput, rejects, p99 of successful requests |
 | R2 | What happens when a serving process dies? | Kill one Ray replica / uvicorn worker / the Triton container under steady load: errors, recovery time |
 

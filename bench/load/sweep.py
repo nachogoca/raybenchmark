@@ -44,7 +44,8 @@ class Sweep:
         self.resume = not a.no_resume
         (RESULTS / "raw").mkdir(parents=True, exist_ok=True)
         (RESULTS / "runs").mkdir(exist_ok=True)
-        self.out = RESULTS / f"{self.env}.jsonl"
+        # the full run owns <env>.jsonl; any other profile (smoke) writes <env>-<profile>.jsonl so they never mix
+        self.out = RESULTS / (f"{self.env}.jsonl" if self.profile_name == "full" else f"{self.env}-{self.profile_name}.jsonl")
         self.done_keys = self._load_done()
         self.log_file = RESULTS / "runs" / f"{self.run_id}.log"
         if self.env.startswith("laptop"):
@@ -91,7 +92,7 @@ class Sweep:
         }
 
     def config_key(self, cfg: StackCfg) -> str:
-        return (f"{self.env}|{cfg.scenario}|{cfg.stack}|{cfg.variant}|{cfg.replicas}|{int(cfg.batching)}")
+        return f"{self.env}|{self.profile_name}|{cfg.scenario}|{cfg.stack}|{cfg.variant}|{cfg.replicas}|{int(cfg.batching)}"
 
     def check_disk(self) -> None:
         """Stop cleanly (resume later) when free disk drops below the guard. Never fill the disk."""

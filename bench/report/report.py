@@ -36,7 +36,7 @@ _colors: dict[str, str] = {}
 TESTS = {
     "S1": ("Latency and capacity",
            "How do latency and capacity compare across stacks as offered load grows?",
-           "Open-loop k6 at a common set of offered rates (25 to 650 req/s), 200 rows per request, 3 repetitions in shuffled stack order. "
+           "Open-loop k6 at a common set of offered rates (25 to 650 req/s), 200 rows per request, 2 repetitions in shuffled stack order. "
            "Then overload at 1.5× and 3× capacity, and a closed-loop max-throughput run.",
            "p50 to p99.99, capacity under each SLO, CPU per request, memory, cold start, cost per 1M requests."),
     "S1_scale": ("Replica scaling",
@@ -45,7 +45,7 @@ TESTS = {
                  "Capacity and scaling efficiency per replica count. This isolates per-replica overhead; it is not a multi-node test."),
     "S1_batch": ("Batching",
                  "When does request batching pay off?",
-                 "Ray @serve.batch (2 and 5 ms wait) and Triton dynamic batching against no batching, at 1 and 200 rows per request.",
+                 "Ray @serve.batch (2 and 5 ms wait) and Triton dynamic batching against no batching, at 200 rows per request.",
                  "Capacity under each SLO."),
     "I1": ("Ingress",
            "What does the ingress layer cost?",
@@ -72,7 +72,7 @@ TESTS = {
     "A1": ("Autoscaling under a 10× burst",
            "How quickly does each setup absorb a 10× step in load?",
            "30 → 300 req/s for 90 s, then back. Static fleets of 1 and 4 replicas against Ray autoscaling "
-           "(target_ongoing_requests 2 and 8, upscale delay 0 and 10 s). Fresh service per run, 3 runs.",
+           "(target_ongoing_requests 2 and 8, upscale delay 0 and 10 s). Fresh service per run, 2 runs.",
            "Time to recover p99, errors, replica count over time, core-seconds."),
     "R1": ("Overload and backpressure",
            "How does each stack behave past capacity?",
@@ -190,7 +190,7 @@ def latency_section(df, order) -> str:
         if col == "p99":
             for s in SLOS:
                 fig.add_hline(y=s, line=dict(dash="dot", color="#999"), annotation_text=f"limit {s} ms", annotation_position="top left")
-        figs.append(fig_html(layout(fig, f"{name} latency vs offered load (median of 3 runs; band = min–max)",
+        figs.append(fig_html(layout(fig, f"{name} latency vs offered load (median of repetitions; band = min–max)",
                                     "offered load (req/s)", f"{name} (ms)", ymax={"p50": 100, "p99": 250, "p999": 500}[col])))
     fig = go.Figure()
     for st in order:
@@ -658,9 +658,10 @@ def methodology_section(df, meta, rows) -> str:
     m = an.matrix()
     inval = int((~df.valid).sum()) if len(df) else 0
     slos = ", ".join(map(str, m["slos_ms"]))
+    nrep = m["scenarios"]["S1"]["reps"]
     return section("method", "Methodology", "How the numbers were produced. Read this before comparing.", f"""<ul>
 <li><b>Load:</b> k6 open-loop (constant arrival rate) on CPUs 6-7; servers on CPUs 0-5 with identical memory limits.</li>
-<li><b>Capacity:</b> highest grid rate with median-of-3 p99 ≤ SLO ({slos} ms), zero errors and ≤ 0.1 % dropped arrivals; 95 % CI by bootstrapping the repetitions.</li>
+<li><b>Capacity:</b> highest grid rate with median-of-{nrep} p99 ≤ SLO ({slos} ms), zero errors and ≤ 0.1 % dropped arrivals; 95 % CI by bootstrapping the repetitions.</li>
 <li><b>Order:</b> stack order shuffled per repetition so thermal drift does not favour one stack; warm-up excluded from every statistic.</li>
 <li><b>Validity:</b> k6 above 80 % of its cores, CPU throttling or a container restart marks a step invalid. Invalid steps are excluded from capacity and listed in the appendix. {inval} of {len(df)} steps are invalid.</li>
 <li><b>Server metrics:</b> Ray, Triton and FastAPI Prometheus counters at 1 Hz; per-process CPU from cgroups and /proc.</li>
