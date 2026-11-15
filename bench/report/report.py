@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import html
 import math
+import re
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -38,54 +39,94 @@ TESTS = {
            "How do latency and capacity compare across stacks as offered load grows?",
            "Open-loop k6 at a common set of offered rates (25 to 650 req/s), 200 rows per request, 2 repetitions in shuffled stack order. "
            "Then overload at 1.5× and 3× capacity, and a closed-loop max-throughput run.",
-           "p50 to p99.99, capacity under each SLO, CPU per request, memory, cold start, cost per 1M requests."),
+           "p50 to p99.99, capacity under each SLO, CPU per request, memory, cold start, cost per 1M requests.",
+           "Capacity is the highest offered load at which p99 stays within the SLO. Under open-loop load, latency rises sharply near capacity because requests queue. The closed-loop run shows peak throughput when each client waits for its reply."),
     "S1_scale": ("Replica scaling",
                  "How does capacity scale with replica count?",
                  "Ray, FastAPI and Triton at 1, 2 and 4 replicas on a fixed 6-CPU budget.",
-                 "Capacity and scaling efficiency per replica count. This isolates per-replica overhead; it is not a multi-node test."),
+                 "Capacity and scaling efficiency per replica count. This isolates per-replica overhead; it is not a multi-node test.",
+           "A replica is one copy of the model server. On a fixed CPU budget, more replicas split the cores, so any gain comes from removing per-process limits (event loop, GIL), not from extra hardware."),
     "S1_batch": ("Batching",
                  "When does request batching pay off?",
                  "Ray @serve.batch (2 and 5 ms wait) and Triton dynamic batching against no batching, at 200 rows per request.",
-                 "Capacity under each SLO."),
+                 "Capacity under each SLO.",
+           "Request batching merges concurrent requests into one model call. It raises throughput per core because the model runs once on a larger input. It adds a wait of up to the batch window, so it helps at high load and can hurt p99 at low load."),
     "I1": ("Ingress",
            "What does the ingress layer cost?",
            "Ray behind the Python proxy, HAProxy and gRPC ingress; Triton over HTTP and gRPC.",
-           "p99 at fixed offered loads, and capacity."),
+           "p99 at fixed offered loads, and capacity.",
+           "The ingress is the first hop: it accepts the request and routes it to a replica. Ray's default is a Python proxy actor. HAProxy is a native proxy that routes straight to replicas. gRPC replaces JSON over HTTP with a binary protocol."),
     "F1": ("Model family (multiplexing)",
            "How do multi-model layouts compare for a 16-model family under Zipf-skewed traffic?",
            "Ray multiplexing (LRU of 4 and of 16 models), one Ray deployment per model, Triton with 16 models, FastAPI with 16 sessions. "
            "Ray multiplexing is also scaled from 4 to 64 models.",
-           "Capacity, memory, model load rate."),
+           "Capacity, memory, model load rate.",
+           "A model family is many models with one architecture and different weights, for example one per market. Ray multiplexing (@serve.multiplexed) serves all of them from one deployment: each replica keeps an LRU cache of loaded models and loads on demand. The alternatives are one deployment per model, or a multi-model server such as Triton."),
     "F2": ("Cold model load",
            "What is the first-request latency of a model that is not loaded?",
            "First request to 5 unused models per stack (multiplexed load in Ray, lazy load in FastAPI, explicit load in Triton), "
            "plus a model evicted from Ray's cache.",
-           "First-request latency against steady state."),
+           "First-request latency against steady state.",
+           "A model that is not in memory must be loaded before it can answer. First-request latency is what a caller pays for a rarely used model, or one the cache evicted."),
     "F3": ("Ensemble fan-out",
            "What does scoring one request with K models and averaging cost as K grows?",
            "K = 1, 4 and 8 at a fixed 40 req/s: Ray handle gather, FastAPI asyncio.gather, Triton ensemble.",
-           "p99 and CPU per request against K."),
+           "p99 and CPU per request against K.",
+           "Ensemble fan-out scores one request with K models and averages the scores. The K calls run in parallel, so latency should grow slowly with K while CPU grows linearly. It shows how cheaply each stack calls several models."),
     "F5": ("Multi-stage pipeline",
            "What does a multi-stage pipeline cost?",
            "Feature step, routed model, calibration step: Ray composed deployments, FastAPI in-process, Triton ensemble with a Python-backend step.",
-           "p99 against offered load, and capacity."),
+           "p99 against offered load, and capacity.",
+           "A pipeline chains stages: feature preparation, the model, calibration. In Ray each stage can be its own deployment called through a handle. In Triton an ensemble wires the stages inside the server. In FastAPI it is one function call."),
     "A1": ("Autoscaling under a 10× burst",
            "How quickly does each setup absorb a 10× step in load?",
            "30 → 300 req/s for 90 s, then back. Static fleets of 1 and 4 replicas against Ray autoscaling "
            "(target_ongoing_requests 2 and 8, upscale delay 0 and 10 s). Fresh service per run, 2 runs.",
-           "Time to recover p99, errors, replica count over time, core-seconds."),
+           "Time to recover p99, errors, replica count over time, core-seconds.",
+           "Autoscaling changes the replica count with load. Ray adds replicas when ongoing requests per replica exceed target_ongoing_requests, after an optional upscale delay. Static fleets are the baseline: too small saturates, too large wastes CPU."),
     "R1": ("Overload and backpressure",
            "How does each stack behave past capacity?",
            "1.5× and 3× capacity with unbounded and bounded queues (Ray max_queued_requests, uvicorn limit-concurrency, Triton max_queue_size).",
-           "Goodput, rejected requests, p99 of successful requests."),
+           "Goodput, rejected requests, p99 of successful requests.",
+           "Backpressure rejects work the server cannot take instead of queueing it without limit. A bounded queue keeps the latency of accepted requests low, at the price of errors for the rest. Goodput is the rate of successful requests."),
     "R2": ("Failure recovery",
            "How does each stack recover when a serving process is killed?",
            "Steady 100 req/s; kill one Ray replica, one uvicorn worker or the Triton container; 3 runs each.",
-           "Errors, and time until p99 returns to baseline."),
+           "Errors, and time until p99 returns to baseline.",
+           "When a serving process dies, requests routed to it fail until a supervisor or orchestrator replaces it. The gap, and how fast p99 returns to baseline, is the recovery cost."),
 }
 PRICE_NAMES = {"gke_n2": "Google Cloud n2 machines", "eks_m6i": "AWS m6i machines"}
 VERSION_KEYS = ("python", "ray", "onnxruntime", "tritonclient", "fastapi", "uvicorn", "numpy", "k6",
                 "image nvcr.io/nvidia/tritonserver:26.10-py3")
+
+
+VARIANT_LABELS = {
+    "mux4": "Ray multiplexing, cache of 4 models", "mux16": "Ray multiplexing, cache of 16 models",
+    "deployments": "Ray, one deployment per model", "triton16": "Triton, 16 models", "fastapi16": "FastAPI, 16 models",
+    "mux16_v4": "Ray multiplexing, 4-model family", "mux16_v64": "Ray multiplexing, 64-model family",
+    "ray_python_proxy": "Ray, Python proxy", "ray_haproxy": "Ray, HAProxy", "ray_grpc": "Ray, gRPC",
+    "triton_http": "Triton, HTTP", "triton_grpc": "Triton, gRPC",
+    "ray_mux": "Ray multiplexing", "fastapi_lazy": "FastAPI, lazy load", "triton_explicit": "Triton, explicit load",
+    "ray_fanout": "Ray, handle gather", "fastapi_fanout": "FastAPI, asyncio.gather", "triton_ensemble": "Triton ensemble",
+    "ray_pipeline": "Ray, composed deployments", "fastapi_pipeline": "FastAPI, in-process", "triton_pipeline": "Triton ensemble",
+    "static1": "Static, 1 replica", "static4": "Static, 4 replicas",
+    "auto_t2_up0": "Autoscaling, target 2, no upscale delay", "auto_t8_up0": "Autoscaling, target 8, no upscale delay",
+    "auto_t2_up10": "Autoscaling, target 2, 10 s upscale delay",
+    "ray_unbounded": "Ray, unbounded queue", "ray_queue50": "Ray, max 50 queued",
+    "fastapi_unbounded": "FastAPI, unbounded", "fastapi_limit50": "FastAPI, limit 50 concurrent",
+    "triton_unbounded": "Triton, unbounded queue", "triton_queue50": "Triton, max 50 queued",
+    "ray": "Ray replica killed", "fastapi": "FastAPI worker killed", "triton": "Triton container killed",
+    "nobatch": "no batching", "wait2": "batching, 2 ms wait", "wait5": "batching, 5 ms wait", "dynamic": "dynamic batching",
+}
+
+
+def vl(v) -> str:
+    """Readable name of a variant key; unknown keys pass through."""
+    v = str(v)
+    m = re.match(r"^(.*)_r(\d+)$", v)
+    if m and m.group(1) in VARIANT_LABELS:
+        return f"{VARIANT_LABELS[m.group(1)]} ({m.group(2)} rows)"
+    return VARIANT_LABELS.get(v, v)
 
 
 def tname(key: str) -> str:
@@ -146,9 +187,9 @@ def nodata(what: str) -> str:
 
 
 def test_block(key: str) -> str:
-    name, question, method, metrics = TESTS[key]
-    return (f'<div class="test"><p><b>Question.</b> {esc(question)}</p><p><b>Method.</b> {esc(method)}</p>'
-            f'<p><b>Metrics.</b> {esc(metrics)}</p></div>')
+    name, question, method, metrics, concept = TESTS[key]
+    return (f'<div class="test"><p><b>Concept.</b> {esc(concept)}</p><p><b>Question.</b> {esc(question)}</p>'
+            f'<p><b>Method.</b> {esc(method)}</p><p><b>Metrics.</b> {esc(metrics)}</p></div>')
 
 
 def group(sid: str, title: str, keys: list[str], inner: str) -> str:
@@ -404,11 +445,11 @@ def ingress_section(df) -> str:
     fig = go.Figure()
     for v in d.variant.unique():
         g = d[(d.variant == v) & (d.kind == "grid")].groupby("rate").p99.median().reset_index()
-        fig.add_trace(go.Scatter(x=g.rate, y=g.p99, mode="lines+markers", name=v, line=dict(color=color(v))))
+        fig.add_trace(go.Scatter(x=g.rate, y=g.p99, mode="lines+markers", name=vl(v), line=dict(color=color(v))))
     out = [fig_html(layout(fig, "p99 by ingress", "offered load (req/s)", "p99 (ms)", ymax=250, h=360))]
     fig = go.Figure()
     for slo, c in ((50, cap50), (100, cap)):
-        fig.add_trace(go.Bar(x=list(c.index), y=list(c.values), name=f"p99 ≤ {slo} ms"))
+        fig.add_trace(go.Bar(x=[vl(x) for x in c.index], y=list(c.values), name=f"p99 ≤ {slo} ms"))
     out.append(fig_html(layout(fig, "Capacity by ingress (short search)", "", "req/s", h=340)))
     return "" + "".join(out)
 
@@ -426,15 +467,15 @@ def family_section(df, cold_v) -> str:
             f = fx[fx.variant == v]
             dv = (f.prom.iloc[0].get("derived") if len(f) and f.prom.iloc[0] else None) or {}
             miss = (dv["mux_loads"] / dv["mux_requests"]) if dv.get("mux_requests") else None
-            rows.append({"variant": v, "stack": label(c100[c100.variant == v].stk.iloc[0]),
+            rows.append({"variant": vl(v), "stack": label(c100[c100.variant == v].stk.iloc[0]),
                          "c50": int(c50[c50.variant == v].capacity.iloc[0]) if (c50.variant == v).any() else "–",
                          "c100": int(c100[c100.variant == v].capacity.iloc[0]),
                          "p99": fmt(f.p99.median() if len(f) else None, 1, " ms"),
                          "rss": fmt(f.rss.median() if len(f) else None, 0, " MB"),
                          "cpu": fmt(f.cpu.median() if len(f) else None, 2),
                          "miss": fmt(100 * miss, 1, " %") if miss is not None else "–"})
-        fig = go.Figure(go.Bar(x=c100.variant, y=c100.capacity, name="p99 ≤ 100 ms"))
-        fig.add_trace(go.Bar(x=c50.variant, y=c50.capacity, name="p99 ≤ 50 ms"))
+        fig = go.Figure(go.Bar(x=[vl(x) for x in c100.variant], y=c100.capacity, name="p99 ≤ 100 ms"))
+        fig.add_trace(go.Bar(x=[vl(x) for x in c50.variant], y=c50.capacity, name="p99 ≤ 50 ms"))
         out.append(""
                    + fig_html(layout(fig, "Capacity, 16-model family, Zipf(1.1) traffic", "", "req/s", h=360))
                    + table(rows, [("variant", "Config"), ("stack", "Stack"), ("c50", "Capacity (p99 ≤ 50 ms)"), ("c100", "Capacity (p99 ≤ 100 ms)"),
@@ -442,8 +483,8 @@ def family_section(df, cold_v) -> str:
     if not cold_v.empty:
         fig = go.Figure()
         for (v, kind), g in cold_v.groupby(["variant", "kind"]):
-            fig.add_trace(go.Box(y=g.first_ms, name=f"{v} ({kind})", boxpoints="all"))
-        fig.add_trace(go.Scatter(x=[f"{v} ({k})" for (v, k), g in cold_v.groupby(["variant", "kind"])],
+            fig.add_trace(go.Box(y=g.first_ms, name=f"{vl(v)} ({kind})", boxpoints="all"))
+        fig.add_trace(go.Scatter(x=[f"{vl(v)} ({k})" for (v, k), g in cold_v.groupby(["variant", "kind"])],
                                  y=[g.steady_ms.median() for _, g in cold_v.groupby(["variant", "kind"])],
                                  mode="markers", name="steady-state", marker=dict(symbol="line-ew", size=18, color="#333", line=dict(width=2))))
         out.append(fig_html(layout(fig, "First-request latency, cold model (ms)", "", "ms", logy=True, h=380)))
@@ -460,9 +501,9 @@ def fanout_section(df) -> str:
         f1, f2 = go.Figure(), go.Figure()
         for s, g in d.groupby("system"):
             a = g.groupby("k").p99.median().reset_index()
-            f1.add_trace(go.Scatter(x=a.k, y=a.p99, mode="lines+markers", name=s, line=dict(color=color(s))))
+            f1.add_trace(go.Scatter(x=a.k, y=a.p99, mode="lines+markers", name=vl(s), line=dict(color=color(s))))
             b = g.assign(v=g.cpu / g.rps * 1000).groupby("k").v.median().reset_index()
-            f2.add_trace(go.Scatter(x=b.k, y=b.v, mode="lines+markers", name=s, line=dict(color=color(s))))
+            f2.add_trace(go.Scatter(x=b.k, y=b.v, mode="lines+markers", name=vl(s), line=dict(color=color(s))))
         out.append(""
                    + fig_html(layout(f1, "p99 vs K (40 req/s)", "K models per request", "p99 (ms)", ymax=300, h=340))
                    + fig_html(layout(f2, "CPU cost per request vs K", "K models per request", "CPU ms / request", h=340)))
@@ -478,11 +519,11 @@ def pipeline_section(df) -> str:
         fig = go.Figure()
         for v, g in p.groupby("variant"):
             a = g.groupby("rate").p99.median().reset_index()
-            fig.add_trace(go.Scatter(x=a.rate, y=a.p99, mode="lines+markers", name=v, line=dict(color=color(v))))
+            fig.add_trace(go.Scatter(x=a.rate, y=a.p99, mode="lines+markers", name=vl(v), line=dict(color=color(v))))
         cap = an.search_capacity(df, "F5", 100)
         out.append(""
                    + fig_html(layout(fig, "p99 vs offered load", "req/s", "p99 (ms)", ymax=250, h=340))
-                   + table([{"v": r.variant, "c": int(r.capacity)} for r in cap.itertuples()], [("v", "Stack"), ("c", "Capacity (p99 ≤ 100 ms)")]))
+                   + table([{"v": vl(r.variant), "c": int(r.capacity)} for r in cap.itertuples()], [("v", "Stack"), ("c", "Capacity (p99 ≤ 100 ms)")]))
     return "".join(out)
 
 
@@ -491,7 +532,7 @@ def batching_section(df) -> str:
     if c100.empty:
         return nodata("S1_batch")
     c100 = c100.sort_values(["variant", "stk"])
-    names = [f"{label(r.stk)} · {r.variant}" for r in c100.itertuples()]
+    names = [f"{label(r.stk)} · {vl(r.variant)}" for r in c100.itertuples()]
     fig = go.Figure()
     fig.add_trace(go.Bar(x=names, y=c100.capacity, name="p99 ≤ 100 ms"))
     m50 = c50.set_index(["variant", "stk"]).capacity
@@ -523,13 +564,13 @@ def autoscale_section(df, slo=50) -> str:
             maxr.append(max(gauge) if gauge else None)
             if i == 0 and ser:
                 t = [s["t"] for s in ser]
-                f_lat.add_trace(go.Scatter(x=t, y=[s["p99"] for s in ser], name=pol, mode="lines", line=dict(color=c)))
-                f_err.add_trace(go.Scatter(x=t, y=[s["err"] for s in ser], name=pol, mode="lines", line=dict(color=c)))
+                f_lat.add_trace(go.Scatter(x=t, y=[s["p99"] for s in ser], name=vl(pol), mode="lines", line=dict(color=c)))
+                f_err.add_trace(go.Scatter(x=t, y=[s["err"] for s in ser], name=vl(pol), mode="lines", line=dict(color=c)))
                 pt = r.prom.get("t") or []
                 if gauge and pt:
                     off = (r.t_measure or pt[0])
-                    f_rep.add_trace(go.Scatter(x=[x - off for x in pt], y=gauge, name=pol, mode="lines", line=dict(color=c, shape="hv")))
-        rows.append({"p": pol, "rec": fmt(np.nanmedian([x for x in rec if x is not None] or [np.nan]), 0, " s") if any(x is not None for x in rec) else "never",
+                    f_rep.add_trace(go.Scatter(x=[x - off for x in pt], y=gauge, name=vl(pol), mode="lines", line=dict(color=c, shape="hv")))
+        rows.append({"p": vl(pol), "rec": fmt(np.nanmedian([x for x in rec if x is not None] or [np.nan]), 0, " s") if any(x is not None for x in rec) else "never",
                      "err": fmt(np.median(errs), 0), "p99": fmt(np.nanmedian(p99b), 1, " ms"),
                      "core": fmt(np.nanmedian([x for x in cores if x] or [np.nan]), 0), "max": fmt(np.nanmax([x for x in maxr if x] or [np.nan]), 0)})
     for f in (f_lat, f_rep, f_err):
@@ -551,13 +592,13 @@ def backpressure_section(df) -> str:
     rows = []
     for v, g in d.groupby("variant"):
         a = g.groupby("rate").agg(ok=("ok", "median"), dur=("duration_s", "median"), p99=("p99", "median")).reset_index()
-        f1.add_trace(go.Scatter(x=a.rate, y=a.ok / a.dur, mode="lines+markers", name=v, line=dict(color=color(v))))
-        f2.add_trace(go.Scatter(x=a.rate, y=a.p99, mode="lines+markers", name=v, line=dict(color=color(v))))
+        f1.add_trace(go.Scatter(x=a.rate, y=a.ok / a.dur, mode="lines+markers", name=vl(v), line=dict(color=color(v))))
+        f2.add_trace(go.Scatter(x=a.rate, y=a.p99, mode="lines+markers", name=vl(v), line=dict(color=color(v))))
     mx = float(d.rate.max())
     f1.add_trace(go.Scatter(x=[0, mx], y=[0, mx], mode="lines", name="perfect", line=dict(dash="dot", color="#999")))
     for r in d[d.kind == "overload"].itertuples():
         codes = ", ".join(f"{k}: {v}" for k, v in r.error_codes.items()) or "none"
-        rows.append({"v": r.variant, "f": f"{r.factor}×", "rate": r.rate, "good": fmt(r.ok / r.duration_s, 0),
+        rows.append({"v": vl(r.variant), "f": f"{r.factor}×", "rate": r.rate, "good": fmt(r.ok / r.duration_s, 0),
                      "p99": fmt(r.p99, 1, " ms"), "codes": codes})
     return (""
             + fig_html(layout(f1, "Goodput vs offered load", "offered (req/s)", "goodput (req/s)", h=360))
@@ -585,9 +626,9 @@ def failure_section(df) -> str:
             win.append(sum(1 for s in ser if s["err"] > 0))
             if i == 0:
                 t = [s["t"] - kill for s in ser]
-                fig.add_trace(go.Scatter(x=t, y=[s["err"] for s in ser], name=pol, line=dict(color=color(pol))))
-                fig2.add_trace(go.Scatter(x=t, y=[s["p99"] for s in ser], name=pol, line=dict(color=color(pol))))
-        rows.append({"p": pol, "err": fmt(np.median(errs) if errs else None, 0), "win": fmt(np.median(win) if win else None, 0, " s"),
+                fig.add_trace(go.Scatter(x=t, y=[s["err"] for s in ser], name=vl(pol), line=dict(color=color(pol))))
+                fig2.add_trace(go.Scatter(x=t, y=[s["p99"] for s in ser], name=vl(pol), line=dict(color=color(pol))))
+        rows.append({"p": vl(pol), "err": fmt(np.median(errs) if errs else None, 0), "win": fmt(np.median(win) if win else None, 0, " s"),
                      "rec": fmt(np.nanmedian([x for x in recs if x is not None] or [np.nan]), 0, " s")})
     for f in (fig, fig2):
         f.add_vline(x=0, line=dict(color="#b5473a", dash="dash"), annotation_text="kill")
@@ -628,11 +669,11 @@ def summary_section(df, sc, cap, cold_v) -> str:
     i1 = an.search_capacity(df, "I1", 50)
     if len(i1):
         top = i1.sort_values("capacity", ascending=False).iloc[0]
-        card("Best Ray ingress", esc(top.variant), f"{top.capacity} req/s at 50 ms")
+        card("Best Ray ingress", esc(vl(top.variant)), f"{top.capacity} req/s at 50 ms")
     f1 = an.search_capacity(df, "F1", 100)
     if len(f1):
         top = f1.sort_values("capacity", ascending=False).iloc[0]
-        card("Best model-family layout", esc(top.variant), f"{top.capacity} req/s at 100 ms")
+        card("Best model-family layout", esc(vl(top.variant)), f"{top.capacity} req/s at 100 ms")
     table_html = ""
     if not sc.empty:
         rows = [{"stack": label(r.stk), "cap": r.capacity, "ci": r.ci, "p99": fmt(r.p99_at_ref, 1, " ms"), "cores": fmt(r.cores_at_cap, 2),
@@ -673,8 +714,8 @@ def methodology_section(df, meta, rows) -> str:
 def appendix_section(df, rows) -> str:
     cov = df.groupby(["scenario", "stk"]).agg(steps=("valid", "size"), invalid=("valid", lambda s: int((~s).sum()))).reset_index()
     cov_rows = [{"s": tname(r.scenario), "st": label(r.stk), "n": r.steps, "i": r.invalid} for r in cov.itertuples()]
-    bad = [{"s": tname(r.scenario), "st": label(r.stk), "v": r.variant, "rate": r.rate, "why": esc(r.invalid)} for r in df[~df.valid].itertuples()]
-    allrows = [{"s": tname(r.scenario), "v": r.variant, "st": r.stk, "k": r.kind, "rate": r.rate or r.vus, "rep": r.rep,
+    bad = [{"s": tname(r.scenario), "st": label(r.stk), "v": vl(r.variant), "rate": r.rate, "why": esc(r.invalid)} for r in df[~df.valid].itertuples()]
+    allrows = [{"s": tname(r.scenario), "v": vl(r.variant), "st": r.stk, "k": r.kind, "rate": r.rate or r.vus, "rep": r.rep,
                 "p50": fmt(r.p50, 2), "p99": fmt(r.p99, 2), "ok": r.ok, "err": r.err, "dropped": r.dropped, "cpu": fmt(r.cpu, 2),
                 "rss": fmt(r.rss, 0), "valid": "yes" if r.valid else "NO"} for r in df.itertuples()]
     return section("appendix", "Appendix", "Coverage, invalid steps and every measured step (click a header to sort).",
@@ -725,7 +766,7 @@ def to_markdown(sc: pd.DataFrame, df, env: str) -> str:
                        ("R1", "Overload and backpressure (capacity, p99 ≤ 100 ms)")):
         c = an.search_capacity(df, sid, 50 if sid == "I1" else 100)
         if len(c):
-            lines += [f"## {title}", "", "| Config | Capacity (req/s) |", "|---|---|"] + [f"| {r.variant} | {r.capacity} |" for r in c.itertuples()] + [""]
+            lines += [f"## {title}", "", "| Config | Capacity (req/s) |", "|---|---|"] + [f"| {vl(r.variant)} | {r.capacity} |" for r in c.itertuples()] + [""]
     return "\n".join(lines)
 
 

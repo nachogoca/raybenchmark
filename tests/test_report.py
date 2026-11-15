@@ -91,6 +91,9 @@ def test_full_report_from_every_scenario(tmp_path, monkeypatch):
         assert bad not in plain, bad
     for ident in ("S1", "I1", "F1", "F2", "F3", "F5", "A1", "R1", "R2"):
         assert not re.search(rf"\b{ident}\b", plain), ident
+    assert plain.count("Concept.") == 11 and "Ensemble fan-out scores one request with K models" in plain
+    assert "Request batching merges concurrent requests" in plain
+    assert "Ray multiplexing, cache of 16 models" in plain and "mux16" not in plain     # readable variant names
     assert plain.count("Question.") == 11                          # every test explained in its own section
     assert plain.index("Software versions") < plain.rindex("Appendix")      # versions before the appendix
     summary = re.sub(r"<[^>]+>", " ", visible[visible.index('id="summary"'):visible.index('id="method"')])

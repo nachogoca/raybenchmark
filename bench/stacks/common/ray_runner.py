@@ -54,6 +54,8 @@ def run_local(app_builder: Callable[[dict], object], cfg: ServeConfig) -> None:
     import ray
     from ray import serve
 
+    if cfg.grpc:
+        enable_grpc_pickle_alias()      # must precede ray.init: Ray's processes inherit PYTHONPATH when they start
     ray.init(
         num_cpus=cfg.total_cpus,
         include_dashboard=True,
@@ -63,7 +65,6 @@ def run_local(app_builder: Callable[[dict], object], cfg: ServeConfig) -> None:
     )
     kw = {}
     if cfg.grpc:
-        enable_grpc_pickle_alias()
         kw["grpc_options"] = {
             "port": 9000,
             "grpc_servicer_functions": [
