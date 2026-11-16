@@ -101,6 +101,28 @@ What differs from Linux, and why:
 
 `REPORT.md` holds the headline tables.
 
+## Results
+
+Run of 2026-11-15/16 on a single host (6 serving CPUs, 2 for k6), 537 measured steps, 11 tests. Full
+interactive report: `bench/report/report.html` (open it locally); headline tables: `REPORT.md`; raw
+rows: `bench/results/laptop.jsonl`.
+
+Capacity at p99 ≤ 50 ms, DeepFM small, 200 rows per request:
+
+| Stack | Capacity (req/s) | 95 % CI | p99 @ 100 req/s | CPU ms / request | req/s / vCPU | Peak RSS | Cold start | $ / 1M (allocated) | $ / 1M (consumed) |
+|---|---|---|---|---|---|---|---|---|---|
+| Ray + ORT | 275 | 275-275 | 8.2 ms | 16.35 | 45.8 | 1,025 MB | 10.1 s | 0.192 | 0.145 |
+| Ray + FastAPI | 250 | 200-250 | 8.8 ms | 17.89 | 41.7 | 1,029 MB | 10.2 s | 0.211 | 0.159 |
+| Ray + in-process Triton | 250 | 250-275 | 8.7 ms | 17.53 | 41.7 | 1,075 MB | 12.3 s | 0.212 | 0.156 |
+| Ray → Triton (gRPC) | 250 | 250-275 | 11.2 ms | 18.70 | 41.7 | 1,039 MB | 9.8 s | 0.211 | 0.166 |
+| Triton | 250 | 250-300 | 9.5 ms | 22.32 | 41.7 | 41 MB | 0.4 s | 0.207 | 0.192 |
+| FastAPI + ORT | 175 | 175-200 | 9.9 ms | 31.23 | 29.2 | 88 MB | 1.2 s | 0.296 | 0.270 |
+
+Dollar figures use reference cloud prices that are not yet verified (`config/prices.yaml`).
+Known gaps: 19 of 537 steps are flagged invalid (extreme overload steps where the CPU hit its
+thermal limit, and gRPC steps where k6 itself was the bottleneck); the Triton gRPC ingress config stopped
+at 567 req/s when k6 timed out, so its capacity is a lower bound.
+
 ## Layout
 
 - `bench/models`, `bench/protocol`: model export, KServe v2 JSON and gRPC codecs, payloads.

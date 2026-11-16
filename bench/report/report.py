@@ -669,7 +669,7 @@ def summary_section(df, sc, cap, cold_v) -> str:
     i1 = an.search_capacity(df, "I1", 50)
     if len(i1):
         top = i1.sort_values("capacity", ascending=False).iloc[0]
-        card("Best Ray ingress", esc(vl(top.variant)), f"{top.capacity} req/s at 50 ms")
+        card("Highest-capacity ingress", esc(vl(top.variant)), f"{top.capacity} req/s at 50 ms")
     f1 = an.search_capacity(df, "F1", 100)
     if len(f1):
         top = f1.sort_values("capacity", ascending=False).iloc[0]
