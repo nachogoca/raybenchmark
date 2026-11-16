@@ -93,6 +93,9 @@ def test_full_report_from_every_scenario(tmp_path, monkeypatch):
         assert not re.search(rf"\b{ident}\b", plain), ident
     assert plain.count("Concept.") == 11 and "Ensemble fan-out scores one request with K models" in plain
     assert "Request batching merges concurrent requests" in plain
+    fam = text[text.index('id="family"'):text.index('id="fanout"')]       # raw html: figure titles live in the plot json
+    assert fam.index("Cold model load") < fam.index("First-request latency, cold model")      # cold chart under the cold test
+    assert fam.index("Capacity, 16-model family") < fam.index("Cold model load")             # family chart under the family test
     assert "Ray multiplexing, cache of 16 models" in plain and "mux16" not in plain     # readable variant names
     assert plain.count("Question.") == 11                          # every test explained in its own section
     assert plain.index("Software versions") < plain.rindex("Appendix")      # versions before the appendix

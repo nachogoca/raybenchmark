@@ -192,9 +192,14 @@ def test_block(key: str) -> str:
             f'<p><b>Method.</b> {esc(method)}</p><p><b>Metrics.</b> {esc(metrics)}</p></div>')
 
 
-def group(sid: str, title: str, keys: list[str], inner: str) -> str:
-    blocks = "".join((f"<h3>{esc(tname(k))}</h3>" if len(keys) > 1 else "") + test_block(k) for k in keys)
-    return f'<section id="{sid}"><h2>{esc(title)}</h2>{blocks}{inner}</section>'
+def group(sid: str, title: str, keys: list[str], inner: str | list[str]) -> str:
+    """One section per test. When several tests share a section, `inner` is a list with one content per test,
+    so each test's charts follow its own explanation."""
+    if isinstance(inner, str):
+        inner = [inner] + [""] * (len(keys) - 1)
+    body = "".join((f"<h3>{esc(tname(k))}</h3>" if len(keys) > 1 else "") + test_block(k) + part
+                   for k, part in zip(keys, inner, strict=True))
+    return f'<section id="{sid}"><h2>{esc(title)}</h2>{body}</section>'
 
 
 def sub(sid: str, title: str, intro: str, body: str) -> str:
@@ -454,7 +459,7 @@ def ingress_section(df) -> str:
     return "" + "".join(out)
 
 
-def family_section(df, cold_v) -> str:
+def family_section(df) -> str:
     out = []
     d = df[df.scenario == "F1"]
     if d.empty:
@@ -480,6 +485,13 @@ def family_section(df, cold_v) -> str:
                    + fig_html(layout(fig, "Capacity, 16-model family, Zipf(1.1) traffic", "", "req/s", h=360))
                    + table(rows, [("variant", "Config"), ("stack", "Stack"), ("c50", "Capacity (p99 ≤ 50 ms)"), ("c100", "Capacity (p99 ≤ 100 ms)"),
                                   ("p99", "p99 at 60 req/s"), ("rss", "Peak RSS"), ("cpu", "Cores busy"), ("miss", "Model load rate")]))
+    return "".join(out)
+
+
+def cold_section(cold_v) -> str:
+    if cold_v.empty:
+        return nodata("F2")
+    out = []
     if not cold_v.empty:
         fig = go.Figure()
         for (v, kind), g in cold_v.groupby(["variant", "kind"]):
@@ -790,7 +802,7 @@ def build(env: str = "laptop", out_html: Path | None = None, out_md: Path | None
         group("scale", "Replica scaling", ["S1_scale"], fleet_section(df, order, sc)),
         group("batch", "Batching", ["S1_batch"], batching_section(df)),
         group("ingress", "Ingress", ["I1"], ingress_section(df)),
-        group("family", "Model family (multiplexing and cold load)", ["F1", "F2"], family_section(df, cold_v)),
+        group("family", "Model family (multiplexing and cold load)", ["F1", "F2"], [family_section(df), cold_section(cold_v)]),
         group("fanout", "Ensemble fan-out", ["F3"], fanout_section(df)),
         group("pipeline", "Multi-stage pipeline", ["F5"], pipeline_section(df)),
         group("autoscale", "Autoscaling under a 10× burst", ["A1"], autoscale_section(df)),
